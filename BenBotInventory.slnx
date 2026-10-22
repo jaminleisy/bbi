@@ -1,0 +1,5 @@
+<Solution>
+  <Folder Name="/Server/">
+    <Project Path="Server/BenBotInventory.Server.csproj" />
+  </Folder>
+</Solution>

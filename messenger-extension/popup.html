@@ -1,0 +1,38 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>BenBot Messenger Bridge</title>
+  <style>
+    body { font: 13px system-ui, sans-serif; width: 280px; padding: 12px; margin: 0; color: #222; }
+    h1 { font-size: 15px; margin: 0 0 10px; }
+    .kv { display: flex; justify-content: space-between; padding: 3px 0; }
+    .kv span:last-child { color: #444; text-align: right; }
+    .row { margin-top: 10px; display: flex; gap: 6px; }
+    button { flex: 1; padding: 6px 8px; font: inherit; cursor: pointer; }
+    .pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-weight: 600; }
+    .pill.ok { background: #dff5df; color: #1c5c1c; }
+    .pill.err { background: #f7dada; color: #7a1616; }
+    .pill.warn { background: #fff2c8; color: #7a5a00; }
+    #log { margin-top: 8px; font-size: 12px; color: #555; max-height: 96px; overflow: auto; border-top: 1px solid #eee; padding-top: 6px; }
+  </style>
+</head>
+<body>
+  <h1>BenBot Messenger Bridge</h1>
+
+  <div class="kv"><span>Server</span> <span id="server">…</span></div>
+  <div class="kv"><span>Status</span> <span id="conn" class="pill warn">unknown</span></div>
+  <div class="kv"><span>Last ingest</span> <span id="lastIngest">—</span></div>
+  <div class="kv"><span>Last poll</span> <span id="lastPoll">—</span></div>
+  <div class="kv"><span>Pending outbox</span> <span id="pending">—</span></div>
+
+  <div class="row">
+    <button id="sync">Sync now</button>
+    <button id="options">Settings</button>
+  </div>
+
+  <div id="log"></div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

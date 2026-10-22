@@ -1,0 +1,39 @@
+# ---- Secrets / connection config (do NOT commit) ----
+# Ignore ALL appsettings*.json files anywhere in the repo — they contain
+# ConnectionStrings and other environment-specific secrets.
+# Exception: appsettings.sample.json IS committed as a safe template.
+**/appsettings.json
+**/appsettings.*.json
+!**/appsettings.sample.json
+**/PublishProfiles/*.pubxml.user
+*.PublishSettings
+*.pfx
+*.snk
+
+# ---- .NET build output ----
+**/bin/
+**/obj/
+*.user
+*.suo
+*.userprefs
+
+# ---- Visual Studio / Rider ----
+.vs/
+.idea/
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# ---- Generated import data (do NOT commit) ----
+# These SQL files are generated from Builds.xlsx and may contain
+# personal / business data.
+ImportScripts/builds_import.sql
+ImportScripts/update_orderurls.sql
+
+# ---- OS / editor noise ----
+.DS_Store
+Thumbs.db
