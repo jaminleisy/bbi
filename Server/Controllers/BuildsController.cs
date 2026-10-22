@@ -121,7 +121,8 @@ public class BuildsController : ControllerBase
             return new
             {
                 c.Id,
-                c.Name,
+                Name = ComputerDisplayName.From(c.Name, c.parts.Select(p =>
+                    new ComputerDisplayName.PartBits(p.Type, p.Manufacturer, p.ModelNumber, p.Color))),
                 c.Status,
                 c.BuilderUserId,
                 builderName = builderName ?? c.BuilderUserId,
@@ -157,17 +158,21 @@ public class BuildsController : ControllerBase
         return Ok(types);
     }
 
-    /// <summary>Unassigned inventory parts of a type (no cost) for replace pickers.</summary>
+    /// <summary>
+    /// Unassigned inventory parts of a type (no cost) for replace pickers.
+    /// includePlanned also returns parts on Planned computers, which may be reassigned.
+    /// </summary>
     [HttpGet("unassigned-parts")]
     [Authorize(Policy = PermissionPolicies.Level2)]
-    public async Task<ActionResult<IEnumerable<object>>> GetUnassignedParts([FromQuery] string? type = null)
+    public async Task<ActionResult<IEnumerable<object>>> GetUnassignedParts(
+        [FromQuery] string? type = null, [FromQuery] bool includePlanned = false)
     {
         var access = await GetCallerBuildAccessAsync();
         if (access is null) return Unauthorized();
 
         // Never offer possibly/confirmed bad or scam parts for build assignment.
         var query = _db.Parts.AsNoTracking()
-            .Where(p => p.ComputerId == null
+            .Where(p => (p.ComputerId == null || (includePlanned && p.Computer!.Status == "Planned"))
                 && (p.Bad == null || p.Bad == 0)
                 && (p.Scam == null || p.Scam == 0));
         if (!string.IsNullOrWhiteSpace(type))
@@ -186,10 +191,31 @@ public class BuildsController : ControllerBase
                 p.Condition,
                 p.TestedDate,
                 p.Location,
-                p.OrderUrl
+                p.OrderUrl,
+                p.ComputerId,
+                ComputerName = p.Computer != null ? p.Computer.Name : null
             })
             .ToListAsync();
-        return Ok(parts);
+
+        var assignedIds = parts.Where(p => p.ComputerId != null).Select(p => p.ComputerId!.Value);
+        var nameMap = await ComputerDisplayName.MapAsync(_db, assignedIds);
+        return Ok(parts.Select(p => new
+        {
+            p.Id,
+            p.Type,
+            p.Manufacturer,
+            p.ModelNumber,
+            p.Color,
+            p.Received,
+            p.Condition,
+            p.TestedDate,
+            p.Location,
+            p.OrderUrl,
+            p.ComputerId,
+            ComputerName = p.ComputerId != null && nameMap.TryGetValue(p.ComputerId.Value, out var n)
+                ? n
+                : p.ComputerName
+        }));
     }
 
     [HttpGet("{id:int}")]
@@ -264,7 +290,8 @@ public class BuildsController : ControllerBase
         return Ok(new
         {
             computer.Id,
-            computer.Name,
+            Name = ComputerDisplayName.From(computer.Name, computer.parts.Select(p =>
+                new ComputerDisplayName.PartBits(p.Type, p.Manufacturer, p.ModelNumber, p.Color))),
             computer.Status,
             computer.BuilderUserId,
             BuilderName = builderName,

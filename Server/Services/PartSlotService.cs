@@ -91,9 +91,9 @@ public class PartSlotService
             .FirstOrDefaultAsync(p => p.Id == phId && p.ComputerId == computerId);
         if (ph is null) return "notfound";
 
-        var part = await _db.Parts.FirstOrDefaultAsync(p => p.Id == partId);
+        var part = await _db.Parts.Include(p => p.Computer).FirstOrDefaultAsync(p => p.Id == partId);
         if (part is null) return "Part not found.";
-        if (part.ComputerId is not null && part.ComputerId != computerId)
+        if (part.ComputerId is not null && part.ComputerId != computerId && !IsOnPlannedComputer(part))
             return $"Part '{part.Manufacturer} {part.ModelNumber}' is already assigned to another computer.";
         if (!string.Equals(part.Type, ph.Type, StringComparison.OrdinalIgnoreCase))
             return $"Part type '{part.Type}' does not match placeholder type '{ph.Type}'.";
@@ -139,9 +139,11 @@ public class PartSlotService
             .FirstOrDefaultAsync(p => p.Id == partId && p.ComputerId == computerId);
         if (oldPart is null) return "notfound";
 
-        var newPart = await _db.Parts.FirstOrDefaultAsync(p => p.Id == newPartId);
+        var newPart = await _db.Parts.Include(p => p.Computer).FirstOrDefaultAsync(p => p.Id == newPartId);
         if (newPart is null) return "Replacement part not found.";
-        if (newPart.ComputerId is not null)
+        if (newPart.ComputerId == computerId)
+            return $"Part '{newPart.Manufacturer} {newPart.ModelNumber}' is already on this computer.";
+        if (newPart.ComputerId is not null && !IsOnPlannedComputer(newPart))
             return $"Part '{newPart.Manufacturer} {newPart.ModelNumber}' is already assigned.";
         if (!string.Equals(newPart.Type, oldPart.Type, StringComparison.OrdinalIgnoreCase))
             return $"Replacement part type '{newPart.Type}' must match '{oldPart.Type}'.";
@@ -151,4 +153,8 @@ public class PartSlotService
         await _db.SaveChangesAsync();
         return null;
     }
+
+    /// <summary>Parts on Planned computers may be reassigned to another computer.</summary>
+    private static bool IsOnPlannedComputer(Part part) =>
+        part.Computer is not null && part.Computer.Status == "Planned";
 }

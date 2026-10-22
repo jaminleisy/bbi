@@ -9,6 +9,7 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatDatepickerModule } from '@angular/material/datepicker';
 import { Computer, Payment, PAYMENT_METHODS, PAYMENT_TYPES } from '../../models';
 import { taxFromInclusiveAmount } from '../../tax';
+import { computerDisplayName } from '../../part-display';
 
 /** Dialog close payload: payment fields plus optional computer customer fields. */
 export type PaymentDialogResult = Partial<Payment> & {
@@ -23,7 +24,7 @@ export type PaymentDialogResult = Partial<Payment> & {
   imports: [CommonModule, FormsModule, MatDialogModule, MatFormFieldModule, MatInputModule,
     MatSelectModule, MatButtonModule, MatDatepickerModule],
   template: `
-    <h2 mat-dialog-title>Record Payment — {{ data.computer.name }}</h2>
+    <h2 mat-dialog-title>Record Payment — {{ computerDisplayName(data.computer) }}</h2>
     <mat-dialog-content>
       <div class="pay-form">
         <mat-form-field appearance="outline">
@@ -122,6 +123,7 @@ export type PaymentDialogResult = Partial<Payment> & {
   `]
 })
 export class PaymentDialogComponent {
+  computerDisplayName = computerDisplayName;
   types = PAYMENT_TYPES;
   methods = PAYMENT_METHODS;
   model: Partial<Payment> = { type: 'payment', date: new Date().toISOString() };

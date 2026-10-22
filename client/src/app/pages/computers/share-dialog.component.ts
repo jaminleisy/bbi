@@ -7,6 +7,7 @@ import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
 import { MatButtonModule } from '@angular/material/button';
 import { Computer, ComputerShare, Lookups } from '../../models';
+import { computerDisplayName } from '../../part-display';
 
 export interface ShareDialogData {
   computer: Computer;
@@ -20,7 +21,7 @@ export interface ShareDialogData {
   imports: [CommonModule, FormsModule, MatDialogModule, MatFormFieldModule, MatInputModule,
     MatSelectModule, MatButtonModule],
   template: `
-    <h2 mat-dialog-title>{{ editing ? 'Edit Share' : 'Add Share' }} — {{ data.computer.name }}</h2>
+    <h2 mat-dialog-title>{{ editing ? 'Edit Share' : 'Add Share' }} — {{ computerDisplayName(data.computer) }}</h2>
     <mat-dialog-content>
       <div class="share-form">
         <mat-form-field appearance="outline">
@@ -62,6 +63,7 @@ export interface ShareDialogData {
   `]
 })
 export class ShareDialogComponent {
+  computerDisplayName = computerDisplayName;
   editing: boolean;
   model: Partial<ComputerShare>;
 

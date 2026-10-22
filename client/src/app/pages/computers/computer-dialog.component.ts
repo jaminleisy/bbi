@@ -14,8 +14,6 @@ import { taxFromInclusiveAmount } from '../../tax';
 export interface ComputerDialogData {
   computer: Computer | null;
   lookups: Lookups;
-  /** Prefill Name when creating a new computer (e.g. from the parts wizard). */
-  presetName?: string;
 }
 
 @Component({
@@ -29,7 +27,8 @@ export interface ComputerDialogData {
       <div class="form-grid">
         <mat-form-field appearance="outline" style="grid-column: span 2">
           <mat-label>Name</mat-label>
-          <input matInput [(ngModel)]="model.name" required>
+          <input matInput [(ngModel)]="model.name">
+          <mat-hint>Leave blank to name from the case and GPU</mat-hint>
         </mat-form-field>
 
         <mat-form-field appearance="outline">
@@ -183,7 +182,7 @@ export interface ComputerDialogData {
     </mat-dialog-content>
     <mat-dialog-actions align="end">
       <button mat-button mat-dialog-close>Cancel</button>
-      <button mat-flat-button color="primary" [disabled]="!model.name" (click)="save()">Save</button>
+      <button mat-flat-button color="primary" (click)="save()">Save</button>
     </mat-dialog-actions>
   `,
   styles: [`
@@ -232,7 +231,7 @@ export class ComputerDialogComponent {
     this.model = data.computer
       ? { ...data.computer }
       : {
-          name: data.presetName?.trim() || '',
+          name: '',
           type: 'PC',
           status: 'Planned',
           ignoreIncomplete: false
@@ -250,6 +249,7 @@ export class ComputerDialogComponent {
   }
 
   save(): void {
+    this.model.name = this.model.name?.trim() ?? '';
     this.dialogRef.close(this.model);
   }
 }

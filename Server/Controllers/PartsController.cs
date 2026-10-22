@@ -94,6 +94,7 @@ public class PartsController : ControllerBase
         [FromQuery] DateTime? orderDateFrom,
         [FromQuery] DateTime? orderDateTo,
         [FromQuery] bool? unassigned,
+        [FromQuery] bool? includePlanned,
         [FromQuery] bool? excludeSold,
         [FromQuery] bool? excludeConfirmedBad,
         [FromQuery] bool? excludeBad,
@@ -115,7 +116,13 @@ public class PartsController : ControllerBase
             query = query.Where(p => p.Location == location);
         if (orderDateFrom.HasValue) query = query.Where(p => p.OrderDate >= orderDateFrom);
         if (orderDateTo.HasValue) query = query.Where(p => p.OrderDate <= orderDateTo);
-        if (unassigned == true) query = query.Where(p => p.ComputerId == null);
+        if (unassigned == true)
+        {
+            // includePlanned: also offer parts sitting on Planned computers (reassignable).
+            query = includePlanned == true
+                ? query.Where(p => p.ComputerId == null || p.Computer!.Status == "Planned")
+                : query.Where(p => p.ComputerId == null);
+        }
         // When listing assigned parts, optionally hide those on Sold computers.
         if (excludeSold == true)
             query = query.Where(p => p.ComputerId == null || p.Computer!.Status != "Sold");
@@ -176,11 +183,27 @@ public class PartsController : ControllerBase
             })
             .ToListAsync();
 
+        var assignedIds = parts.Where(p => p.ComputerId != null).Select(p => p.ComputerId!.Value);
+        var nameMap = await ComputerDisplayName.MapAsync(_db, assignedIds);
+
         return Ok(parts
             .OrderBy(p => PartTypeOrder.Rank(p.Type))
             .ThenBy(p => p.Type, StringComparer.OrdinalIgnoreCase)
             .ThenBy(p => p.Manufacturer)
             .ThenBy(p => p.ModelNumber)
+            .Select(p => new
+            {
+                p.Id, p.Type, p.Manufacturer, p.ModelNumber, p.Cost, p.OrderDate, p.OrderUrl,
+                p.Seller, p.Color, p.HasRgb, p.CpuSocket, p.PcieGen, p.RamType, p.Location,
+                p.Received, p.TestedDate, p.TestedUserId, p.Condition, p.ReturnByDate,
+                p.Merchant, p.Notes, p.Bad, p.Scam, p.Lost,
+                p.ComputerId,
+                ComputerName = p.ComputerId != null && nameMap.TryGetValue(p.ComputerId.Value, out var n)
+                    ? n
+                    : p.ComputerName,
+                p.ComputerStatus,
+                p.ComputerLocation
+            })
             .ToList());
     }
 

@@ -45,6 +45,47 @@ export function partModelText(
   return `${model} (${color})`;
 }
 
+export type NamedPart = {
+  type: string;
+  manufacturer?: string | null;
+  modelNumber?: string | null;
+  color?: string | null;
+};
+
+/** Auto name when a computer's stored name is blank. */
+export function generateBlankComputerName(parts: readonly NamedPart[]): string {
+  const ofType = (type: string) =>
+    parts.find(p => (p.type ?? '').toLowerCase() === type);
+  const caseLabel = partDisplayLabel(ofType('case') ?? {}, '');
+  const gpuLabel = partDisplayLabel(ofType('gpu') ?? {}, '');
+  if (caseLabel && gpuLabel) return `${caseLabel} - ${gpuLabel}`;
+  if (caseLabel) return caseLabel;
+  if (gpuLabel) return gpuLabel;
+  for (const p of sortByPartType(parts)) {
+    const label = partDisplayLabel(p, '');
+    if (label) return `Unnamed - ${label}`;
+  }
+  return 'Unnamed';
+}
+
+/**
+ * Shown name for a PC: stored name when set, otherwise case/GPU (or
+ * "Unnamed - {one part}"). Prefers generating from `parts` when present so
+ * the label stays current after assignments.
+ */
+export function computerDisplayName(computer: {
+  name?: string | null;
+  displayName?: string | null;
+  parts?: readonly NamedPart[] | null;
+}): string {
+  const stored = computer.name?.trim();
+  if (stored) return stored;
+  if (computer.parts?.length) return generateBlankComputerName(computer.parts);
+  const fromServer = computer.displayName?.trim();
+  if (fromServer) return fromServer;
+  return 'Unnamed';
+}
+
 /** Manufacturer + model (+ color), for compact part labels. */
 export function partDisplayLabel(
   part: {
@@ -72,6 +113,28 @@ export function isUsedUntested(part: {
 export function isScamPart(part: { scam?: number | null }): boolean {
   const s = part.scam ?? 0;
   return s === 1 || s === 2;
+}
+
+/**
+ * When a part is already on a different (Planned) computer, ask before taking it.
+ * Returns true when the part is free, already on the target, or the user confirms.
+ */
+export function confirmReassignFromPlanned(
+  part: {
+    manufacturer?: string | null;
+    modelNumber?: string | null;
+    color?: string | null;
+    computerId?: number | null;
+    computerName?: string | null;
+  },
+  targetComputerId: number | null
+): boolean {
+  if (part.computerId == null || part.computerId === targetComputerId) return true;
+  const from = part.computerName?.trim() || `computer #${part.computerId}`;
+  return confirm(
+    `${partDisplayLabel(part)} is currently assigned to the planned PC "${from}".\n\n` +
+    `Assigning it here will remove it from "${from}". Continue?`
+  );
 }
 
 /** Open order URL in a new tab. Returns false when missing. */

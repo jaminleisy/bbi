@@ -30,7 +30,7 @@ public class MessengerRuleEngine
     public async Task<int?> ProcessThreadAsync(int threadId, CancellationToken ct = default)
     {
         var thread = await _db.MessengerThreads
-            .Include(t => t.Computer)
+            .Include(t => t.Computer!).ThenInclude(c => c.Parts)
             .FirstOrDefaultAsync(t => t.Id == threadId, ct);
         if (thread is null) return null;
 
@@ -123,7 +123,9 @@ public class MessengerRuleEngine
         if (string.IsNullOrEmpty(template)) return template;
         var counterparty = thread.CounterpartyName ?? "there";
         var listing = thread.ListingTitle ?? "the item";
-        var build = thread.Computer?.Name ?? thread.ListingTitle ?? "";
+        var build = thread.Computer is not null
+            ? ComputerDisplayName.From(thread.Computer)
+            : thread.ListingTitle ?? "";
         var price = thread.Computer?.Price?.ToString("0.##") ?? "";
         var text = incoming.Text ?? "";
 

@@ -8,6 +8,7 @@ import { MatSelectModule } from '@angular/material/select';
 import { MatButtonModule } from '@angular/material/button';
 import { MatDatepickerModule } from '@angular/material/datepicker';
 import { Computer, Lookups, PAYMENT_METHODS, Wage } from '../../models';
+import { computerDisplayName } from '../../part-display';
 
 export interface WageDialogData {
   computer: Computer;
@@ -21,7 +22,7 @@ export interface WageDialogData {
   imports: [CommonModule, FormsModule, MatDialogModule, MatFormFieldModule, MatInputModule,
     MatSelectModule, MatButtonModule, MatDatepickerModule],
   template: `
-    <h2 mat-dialog-title>{{ editing ? 'Edit Wage' : 'Add Wage' }} — {{ data.computer.name }}</h2>
+    <h2 mat-dialog-title>{{ editing ? 'Edit Wage' : 'Add Wage' }} — {{ computerDisplayName(data.computer) }}</h2>
     <mat-dialog-content>
       <div class="wage-form">
         <mat-form-field appearance="outline">
@@ -84,6 +85,7 @@ export interface WageDialogData {
   `]
 })
 export class WageDialogComponent {
+  computerDisplayName = computerDisplayName;
   methods = PAYMENT_METHODS;
   editing: boolean;
   model: Partial<Wage>;

@@ -13,11 +13,12 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { ApiService } from '../../services/api.service';
 import { Lookups, Part } from '../../models';
-import { comparePartTypes, isScamPart, isUsedUntested, openPartOrderUrl, partDisplayLabel } from '../../part-display';
+import { comparePartTypes, confirmReassignFromPlanned, isScamPart, isUsedUntested, openPartOrderUrl, partDisplayLabel } from '../../part-display';
 
 export interface NewComputerPartsResult {
   partIds: number[];
-  presetName: string;
+  /** Planned computers that selected parts are being taken from. */
+  takenFromIds: number[];
 }
 
 interface PartSlot {
@@ -50,6 +51,10 @@ const TYPE_LABELS: Record<string, string> = {
       <p class="hint">
         Pick each required part. Type to filter, use ↑ ↓ and Enter to select — then the next field is focused.
       </p>
+      <label class="show-planned">
+        <input type="checkbox" [(ngModel)]="showPlanned">
+        Show parts assigned to planned PCs
+      </label>
 
       @if (loading) {
         <div class="center"><mat-spinner diameter="36"></mat-spinner></div>
@@ -98,6 +103,9 @@ const TYPE_LABELS: Record<string, string> = {
                         }
                         @if (!p.received) {
                           <span class="warn">not received</span>
+                        }
+                        @if (p.computerId != null) {
+                          <span class="planned-on">On planned: {{ p.computerName }}</span>
                         }
                       </li>
                     }
@@ -239,6 +247,24 @@ const TYPE_LABELS: Record<string, string> = {
       white-space: nowrap;
     }
     .warn { color: #d32f2f; font-size: 12px; flex-shrink: 0; }
+    .planned-on {
+      flex-shrink: 0;
+      font-size: 11px;
+      background: #fff3e0;
+      color: #e65100;
+      border-radius: 8px;
+      padding: 1px 7px;
+      white-space: nowrap;
+    }
+    .show-planned {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin: -8px 0 12px;
+      font-size: 13px;
+      color: #555;
+      cursor: pointer;
+    }
     .slot-status { min-height: 22px; margin-top: 2px; }
     .selected-line {
       display: flex;
@@ -259,6 +285,7 @@ export class NewComputerPartsDialogComponent implements OnInit, AfterViewInit {
   slots: PartSlot[] = [];
   private allParts: Part[] = [];
   loading = true;
+  showPlanned = false;
   activeIndex = 0;
   dropdownOpen = true;
   isUsedUntested = isUsedUntested;
@@ -283,7 +310,7 @@ export class NewComputerPartsDialogComponent implements OnInit, AfterViewInit {
   }
 
   ngOnInit(): void {
-    this.api.getParts({ unassigned: true, excludeBad: true, excludeScam: true }).subscribe({
+    this.api.getParts({ unassigned: true, includePlanned: true, excludeBad: true, excludeScam: true }).subscribe({
       next: parts => {
         this.allParts = parts.filter(p => !isScamPart(p));
         this.loading = false;
@@ -315,6 +342,7 @@ export class NewComputerPartsDialogComponent implements OnInit, AfterViewInit {
 
     return this.allParts
       .filter(p => p.type === slot.type && !taken.has(p.id))
+      .filter(p => this.showPlanned || p.computerId == null)
       .filter(p => {
         if (!filterQuery) return true;
         const hay = `${p.manufacturer ?? ''} ${p.modelNumber ?? ''} ${p.color ?? ''} ${p.location ?? ''}`.toLowerCase();
@@ -387,6 +415,10 @@ export class NewComputerPartsDialogComponent implements OnInit, AfterViewInit {
   }
 
   selectPart(index: number, part: Part): void {
+    if (!confirmReassignFromPlanned(part, null)) {
+      this.focusSlot(index);
+      return;
+    }
     const slot = this.slots[index];
     slot.selected = part;
     slot.query = this.partLabel(part);
@@ -444,19 +476,9 @@ export class NewComputerPartsDialogComponent implements OnInit, AfterViewInit {
 
   continueToForm(): void {
     const selected = this.slots.map(s => s.selected).filter((p): p is Part => !!p);
-    const byType = new Map(selected.map(p => [p.type, p]));
     this.dialogRef.close({
       partIds: selected.map(p => p.id),
-      presetName: this.buildPresetName(byType)
+      takenFromIds: [...new Set(selected.filter(p => p.computerId != null).map(p => p.computerId!))]
     });
-  }
-
-  private buildPresetName(byType: Map<string, Part>): string {
-    const c = byType.get('case');
-    const g = byType.get('gpu');
-    const caseBit = [c?.manufacturer, c?.modelNumber].filter(Boolean).join(' ').trim();
-    const gpuBit = (g?.modelNumber || g?.manufacturer || '').trim();
-    if (caseBit && gpuBit) return `${caseBit} - ${gpuBit}`;
-    return caseBit || gpuBit || '';
   }
 }

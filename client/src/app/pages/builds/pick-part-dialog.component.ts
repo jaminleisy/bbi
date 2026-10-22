@@ -6,18 +6,19 @@ import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
+import { MatCheckboxModule } from '@angular/material/checkbox';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { ApiService } from '../../services/api.service';
 import { BuildUnassignedPart } from '../../models';
-import { isUsedUntested, openPartOrderUrl, partDisplayLabel } from '../../part-display';
+import { confirmReassignFromPlanned, isUsedUntested, openPartOrderUrl, partDisplayLabel } from '../../part-display';
 
 @Component({
   selector: 'app-pick-part-dialog',
   standalone: true,
   imports: [CommonModule, FormsModule, MatDialogModule, MatFormFieldModule, MatInputModule,
-    MatButtonModule, MatIconModule, MatProgressSpinnerModule, MatTooltipModule, MatSnackBarModule],
+    MatButtonModule, MatIconModule, MatCheckboxModule, MatProgressSpinnerModule, MatTooltipModule, MatSnackBarModule],
   template: `
     <h2 mat-dialog-title>{{ data.title }}</h2>
     <mat-dialog-content>
@@ -31,6 +32,9 @@ import { isUsedUntested, openPartOrderUrl, partDisplayLabel } from '../../part-d
           </button>
         }
       </mat-form-field>
+      <mat-checkbox class="show-planned" [(ngModel)]="showPlanned">
+        Show parts assigned to planned PCs
+      </mat-checkbox>
       @if (loading) {
         <div class="center"><mat-spinner diameter="32"></mat-spinner></div>
       } @else if (!filtered.length) {
@@ -49,6 +53,9 @@ import { isUsedUntested, openPartOrderUrl, partDisplayLabel } from '../../part-d
                 <span class="part-location">{{ p.location }}</span>
               }
               @if (!p.received) { <span class="warn">[not received]</span> }
+              @if (p.computerId != null) {
+                <span class="planned-on">On planned: {{ p.computerName }}</span>
+              }
             </button>
           }
         </div>
@@ -96,6 +103,14 @@ import { isUsedUntested, openPartOrderUrl, partDisplayLabel } from '../../part-d
       flex-shrink: 0;
     }
     .warn { color: #d32f2f; font-size: 12px; }
+    .planned-on {
+      font-size: 11px;
+      background: #fff3e0;
+      color: #e65100;
+      border-radius: 8px;
+      padding: 1px 7px;
+    }
+    .show-planned { display: block; margin: -8px 0 8px; }
   `]
 })
 export class PickPartDialogComponent implements OnInit {
@@ -103,26 +118,31 @@ export class PickPartDialogComponent implements OnInit {
   isUsedUntested = isUsedUntested;
   parts: BuildUnassignedPart[] = [];
   filter = '';
+  showPlanned = false;
   loading = true;
 
   constructor(
     public dialogRef: MatDialogRef<PickPartDialogComponent, BuildUnassignedPart>,
-    @Inject(MAT_DIALOG_DATA) public data: { type: string; title: string },
+    @Inject(MAT_DIALOG_DATA) public data: { type: string; title: string; computerId: number },
     private api: ApiService,
     private snack: MatSnackBar
   ) {}
 
   ngOnInit(): void {
-    this.api.getBuildUnassignedParts(this.data.type).subscribe({
-      next: parts => { this.parts = parts; this.loading = false; },
+    this.api.getBuildUnassignedParts(this.data.type, true).subscribe({
+      next: parts => {
+        this.parts = parts.filter(p => p.computerId !== this.data.computerId);
+        this.loading = false;
+      },
       error: () => { this.loading = false; }
     });
   }
 
   get filtered(): BuildUnassignedPart[] {
     const f = this.filter.toLowerCase().trim();
-    if (!f) return this.parts;
-    return this.parts.filter(p =>
+    const list = this.showPlanned ? this.parts : this.parts.filter(p => p.computerId == null);
+    if (!f) return list;
+    return list.filter(p =>
       (p.manufacturer ?? '').toLowerCase().includes(f) ||
       (p.modelNumber ?? '').toLowerCase().includes(f) ||
       (p.color ?? '').toLowerCase().includes(f) ||
@@ -138,6 +158,7 @@ export class PickPartDialogComponent implements OnInit {
       }
       return;
     }
+    if (!confirmReassignFromPlanned(p, this.data.computerId)) return;
     this.dialogRef.close(p);
   }
 }

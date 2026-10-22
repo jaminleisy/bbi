@@ -18,7 +18,7 @@ import { AuthService } from '../../services/auth.service';
 import {
   BuildDetail, BuildPartSummary, BuildPlaceholderSummary, BuildUnassignedPart, Lookups, PartType, STATUSES, UserRef
 } from '../../models';
-import { groupIdenticalParts, partDisplayLabel, partQtyLabel, partTypeLabel, sortByPartType, GroupedPart } from '../../part-display';
+import { computerDisplayName, groupIdenticalParts, partDisplayLabel, partQtyLabel, partTypeLabel, sortByPartType, GroupedPart } from '../../part-display';
 import { PickPartDialogComponent } from './pick-part-dialog.component';
 import { PartDialogComponent } from '../parts/part-dialog.component';
 
@@ -42,7 +42,7 @@ import { PartDialogComponent } from '../parts/part-dialog.component';
         <div class="empty">Build not found, or you do not have access.</div>
       } @else {
         <div class="header-row">
-          <h1>{{ build.name }}</h1>
+          <h1>{{ computerDisplayName(build) }}</h1>
           @if (canEdit) {
             <div class="header-edits" (click)="$event.stopPropagation()">
               <mat-form-field appearance="outline" class="header-field">
@@ -527,6 +527,7 @@ import { PartDialogComponent } from '../parts/part-dialog.component';
   `]
 })
 export class BuildDetailComponent implements OnInit {
+  computerDisplayName = computerDisplayName;
   build: BuildDetail | null = null;
   loading = true;
   saving = false;
@@ -867,7 +868,7 @@ export class BuildDetailComponent implements OnInit {
 
   private pickPart(type: string, title: string): Observable<BuildUnassignedPart | undefined> {
     const ref = this.dialog.open(PickPartDialogComponent, {
-      data: { type, title },
+      data: { type, title, computerId: this.buildId },
       width: '480px',
       maxHeight: '80vh'
     });

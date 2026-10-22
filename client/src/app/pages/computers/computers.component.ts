@@ -8,7 +8,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
-import { MatSlideToggleModule } from '@angular/material/slide-toggle';
+import { MatTabsModule } from '@angular/material/tabs';
 import { MatDialog, MatDialogModule } from '@angular/material/dialog';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { MatTooltipModule } from '@angular/material/tooltip';
@@ -16,7 +16,7 @@ import { MatChipsModule } from '@angular/material/chips';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { ApiService } from '../../services/api.service';
 import { Computer, Lookups, Part, STATUSES, Wage, ComputerShare } from '../../models';
-import { groupIdenticalParts, partModelText, partQtyLabel, sortByPartType, GroupedPart } from '../../part-display';
+import { computerDisplayName, groupIdenticalParts, partModelText, partQtyLabel, sortByPartType, GroupedPart } from '../../part-display';
 import { PartDialogComponent } from '../parts/part-dialog.component';
 import { ComputerDialogComponent } from './computer-dialog.component';
 import { PaymentDialogComponent } from './payment-dialog.component';
@@ -28,11 +28,27 @@ import { NewComputerPartsDialogComponent } from './new-computer-parts-dialog.com
 
 export type ComputersPageMode = 'in-progress' | 'sold';
 
+type InProgressTab = 'all' | 'planned' | 'in-progress' | 'built' | 'needs-repair' | 'traded' | 'personal';
+
+/** In-progress page tabs; `statuses: null` means every status not in EXCLUDED_FROM_ALL. */
+const IN_PROGRESS_TABS: { key: InProgressTab; label: string; statuses: string[] | null }[] = [
+  { key: 'all', label: 'All', statuses: null },
+  { key: 'planned', label: 'Planned', statuses: ['Planned'] },
+  { key: 'in-progress', label: 'In-Progress', statuses: ['In-progress'] },
+  { key: 'built', label: 'Built', statuses: ['Built', 'Active'] },
+  { key: 'needs-repair', label: 'Needs Repair', statuses: ['Needs repair'] },
+  { key: 'traded', label: 'Traded', statuses: ['Traded'] },
+  { key: 'personal', label: 'Personal', statuses: ['Personal'] }
+];
+
+/** Statuses that only appear on their own tab, not under All. */
+const EXCLUDED_FROM_ALL = new Set(['Traded', 'Personal']);
+
 @Component({
   selector: 'app-computers',
   standalone: true,
   imports: [CommonModule, FormsModule, MatTableModule, MatButtonModule, MatIconModule,
-    MatFormFieldModule, MatInputModule, MatSelectModule, MatSlideToggleModule,
+    MatFormFieldModule, MatInputModule, MatSelectModule, MatTabsModule,
     MatDialogModule, MatSnackBarModule, MatTooltipModule, MatChipsModule, MatProgressSpinnerModule],
   template: `
     <div class="page-container wide">
@@ -86,13 +102,17 @@ export type ComputersPageMode = 'in-progress' | 'sold';
               }
             </mat-select>
           </mat-form-field>
-        } @else {
-          <div class="filter-toggles">
-            <mat-slide-toggle [(ngModel)]="includeTraded" (change)="load()">Show traded</mat-slide-toggle>
-            <mat-slide-toggle [(ngModel)]="includePersonal" (change)="load()">Show personal</mat-slide-toggle>
-          </div>
         }
       </div>
+
+      @if (mode === 'in-progress') {
+        <mat-tab-group class="status-tabs" animationDuration="0ms" mat-stretch-tabs="false"
+                       [selectedIndex]="tabIndex" (selectedIndexChange)="selectTab($event)">
+          @for (t of tabs; track t.key) {
+            <mat-tab [label]="t.label + (loading ? '' : ' (' + tabCount(t.key) + ')')"></mat-tab>
+          }
+        </mat-tab-group>
+      }
 
       @if (loading) {
         <div style="display:flex;justify-content:center;padding:48px">
@@ -139,7 +159,7 @@ export type ComputersPageMode = 'in-progress' | 'sold';
               Name <mat-icon class="sort-icon">{{ sortIcon('name') }}</mat-icon>
             </th>
             <td mat-cell *matCellDef="let c" class="name-cell">
-              <strong>{{ c.name }}</strong>
+              <strong>{{ computerDisplayName(c) }}</strong>
               <span class="type-badge">{{ c.type }}</span>
             </td>
           </ng-container>
@@ -258,6 +278,44 @@ export type ComputersPageMode = 'in-progress' | 'sold';
             </td>
           </ng-container>
 
+          <ng-container matColumnDef="wages">
+            <th mat-header-cell *matHeaderCellDef (click)="sortBy('wages')" class="sortable-header"
+                matTooltip="Wages paid to anyone except Josh">
+              Wages <mat-icon class="sort-icon">{{ sortIcon('wages') }}</mat-icon>
+            </th>
+            <td mat-cell *matCellDef="let c">{{ (c.wagesNonJosh || 0) | currency }}</td>
+          </ng-container>
+
+          <ng-container matColumnDef="joshShare">
+            <th mat-header-cell *matHeaderCellDef (click)="sortBy('joshShare')" class="sortable-header"
+                matTooltip="Josh's share percentage / Josh's wages">
+              Josh Share <mat-icon class="sort-icon">{{ sortIcon('joshShare') }}</mat-icon>
+            </th>
+            <td mat-cell *matCellDef="let c">
+              @if (c.joshSharePercentage != null) {
+                {{ c.joshSharePercentage }}%
+              }
+              @if (c.joshSharePercentage != null && c.wagesJosh) {
+                <span class="josh-sep">/</span>
+              }
+              @if (c.wagesJosh) {
+                {{ c.wagesJosh | currency }}
+              }
+            </td>
+          </ng-container>
+
+          <ng-container matColumnDef="benProfit">
+            <th mat-header-cell *matHeaderCellDef (click)="sortBy('benProfit')" class="sortable-header"
+                matTooltip="Profit − all wages + wages paid to Ben L">
+              Ben Profit <mat-icon class="sort-icon">{{ sortIcon('benProfit') }}</mat-icon>
+            </th>
+            <td mat-cell *matCellDef="let c">
+              <span [class.ok-text]="(c.benProfit ?? 0) > 0" [class.warn-text]="(c.benProfit ?? 0) < 0">
+                {{ c.benProfit | currency }}
+              </span>
+            </td>
+          </ng-container>
+
           <ng-container matColumnDef="paid">
             <th mat-header-cell *matHeaderCellDef (click)="sortBy('paid')" class="sortable-header">
               Paid <mat-icon class="sort-icon">{{ sortIcon('paid') }}</mat-icon>
@@ -288,6 +346,9 @@ export type ComputersPageMode = 'in-progress' | 'sold';
               }
               @if (c.isShipping) {
                 <mat-icon class="ship-icon" matTooltip="Shipping{{ c.trackingNumber ? ' — ' + c.trackingNumber : '' }}">local_shipping</mat-icon>
+              }
+              @if (mode === 'in-progress' && hasAnyPayment(c)) {
+                <mat-icon class="paid-icon" matTooltip="Paid: {{ c.netPaid | currency }}">attach_money</mat-icon>
               }
             </td>
           </ng-container>
@@ -344,7 +405,7 @@ export type ComputersPageMode = 'in-progress' | 'sold';
                       Missing required: {{ c.missingRequiredTypes.join(', ') }}
                     </div>
                   }
-                  @if (c.parts.length || c.placeholders?.length) {
+                  @if (c.parts.length || c.placeholders?.length || hasBulk(c)) {
                     <table class="inner-table">
                       <tr>
                         <th class="part-edit-col"></th>
@@ -394,6 +455,15 @@ export type ComputersPageMode = 'in-progress' | 'sold';
                           <td>{{ ph.type }} <span class="planned-badge">Planned</span></td>
                           <td colspan="2">{{ ph.description }}</td>
                           <td colspan="5" style="color:#999">Not in inventory</td>
+                        </tr>
+                      }
+                      @if (hasBulk(c)) {
+                        <tr class="bulk-row">
+                          <td class="part-edit-col"></td>
+                          <td>Bulk</td>
+                          <td colspan="2">{{ c.bulkDesc?.trim() || '—' }}</td>
+                          <td>{{ c.bulkCost != null ? (c.bulkCost | currency) : '—' }}</td>
+                          <td colspan="4"></td>
                         </tr>
                       }
                     </table>
@@ -514,15 +584,18 @@ export type ComputersPageMode = 'in-progress' | 'sold';
           <tr mat-row *matRowDef="let c; columns: displayedColumns;"
               class="computer-row"
               [class.expanded-row]="expandedId === c.id"
+              [class.paid-row]="mode === 'in-progress' && hasAnyPayment(c)"
               (click)="toggleExpand(c)"></tr>
           <tr mat-row *matRowDef="let row; columns: ['expandedDetail']" class="detail-row"></tr>
         </table>
         </div>
 
-        @if (computers.length === 0) {
+        @if (sortedComputers.length === 0) {
           <div style="text-align:center;padding:48px;color:#777">
             @if (mode === 'sold') {
               No sold computers found{{ soldYear === 'all' ? '' : ' for ' + soldYear }}.
+            } @else if (activeTab !== 'all') {
+              No {{ activeTabLabel }} computers found.
             } @else {
               No in-progress computers found. Click "New Computer" to create one.
             }
@@ -535,7 +608,8 @@ export type ComputersPageMode = 'in-progress' | 'sold';
     .page-container.wide { max-width: none; }
     .header-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
     .filter-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
-    .filter-toggles { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+    .status-tabs { margin-bottom: 8px; }
+    :host ::ng-deep .status-tabs .mat-mdc-tab-body-wrapper { display: none; }
     .search-field { flex: 1 1 200px; min-width: 0; max-width: 100%; }
     .year-field { width: 120px; flex: 0 0 auto; }
     /* Size to column content so the last columns aren't crushed to 0 width
@@ -662,6 +736,17 @@ export type ComputersPageMode = 'in-progress' | 'sold';
       white-space: nowrap;
       padding-right: 4px;
     }
+    .paid-row td:not(.loc-ben):not(.loc-josh) { background: #f1f8e9; }
+    .paid-row td.price-cell:hover { background: #e3f2fd; }
+    .paid-icon {
+      font-size: 18px;
+      width: 18px;
+      height: 18px;
+      vertical-align: middle;
+      margin-left: 4px;
+      color: #2e7d32;
+    }
+    .josh-sep { color: #999; margin: 0 4px; }
     .loc-ben { background: #c8e6c9; }
     .loc-josh { background: #bbdefb; }
     .warn-cell {
@@ -689,6 +774,7 @@ export type ComputersPageMode = 'in-progress' | 'sold';
       color: #f9a825;
     }
     .planned-row td { font-style: italic; color: #555; }
+    .bulk-row td { border-top: 2px solid #e0e0e0; color: #555; }
     .planned-badge {
       font-size: 11px; font-style: normal;
       background: #fff3e0; color: #e65100;
@@ -728,6 +814,7 @@ export type ComputersPageMode = 'in-progress' | 'sold';
 export class ComputersComponent implements OnInit {
   partModelText = partModelText;
   partQtyLabel = partQtyLabel;
+  computerDisplayName = computerDisplayName;
   mode: ComputersPageMode = 'in-progress';
   displayedColumns: string[] = [];
   computers: Computer[] = [];
@@ -740,18 +827,23 @@ export class ComputersComponent implements OnInit {
   loading = true;
   search = '';
   searchField = 'search';
-  includeTraded = false;
-  includePersonal = false;
+  tabs = IN_PROGRESS_TABS;
+  activeTab: InProgressTab = 'all';
   /** Sold page year filter; 'all' = no year filter. Defaults to current year. */
   soldYear: number | 'all' = new Date().getFullYear();
   soldYearOptions: number[] = [];
 
   sortColumn: string | null = null;
   sortDir: 'asc' | 'desc' = 'asc';
+  /** True once the user clicks a column header; disables the paid-first default. */
+  private userSorted = false;
 
   private searchTimer: ReturnType<typeof setTimeout> | null = null;
-  /** In-progress page: keep these Sold rows visible until the page is left/reloaded. */
-  private stickySoldIds = new Set<number>();
+  /**
+   * In-progress page: keep these Sold rows visible until the page is left/reloaded,
+   * on All and on the tab they were marked from.
+   */
+  private stickySoldTabs = new Map<number, InProgressTab>();
 
   constructor(
     private api: ApiService,
@@ -772,7 +864,7 @@ export class ComputersComponent implements OnInit {
         ]
       : [
           'primaryActions', 'warning', 'name', 'status', 'location', 'builder',
-          'partsCost', 'price', 'tax', 'profit', 'wagesBranden', 'wagesJosh', 'profitBen',
+          'partsCost', 'price', 'profit', 'wages', 'joshShare', 'benProfit',
           'customer', 'actions'
         ];
 
@@ -805,11 +897,46 @@ export class ComputersComponent implements OnInit {
     this.onSearchChange();
   }
 
+  get tabIndex(): number {
+    return this.tabs.findIndex(t => t.key === this.activeTab);
+  }
+
+  get activeTabLabel(): string {
+    return this.tabs[this.tabIndex]?.label.toLowerCase() ?? '';
+  }
+
+  selectTab(index: number): void {
+    this.activeTab = this.tabs[index]?.key ?? 'all';
+    this.expandedId = null;
+  }
+
+  tabCount(tab: InProgressTab): number {
+    return this.computers.filter(c => this.inTab(c, tab)).length;
+  }
+
+  private inTab(c: Computer, tab: InProgressTab): boolean {
+    const stickyTab = this.stickySoldTabs.get(c.id);
+    if (stickyTab !== undefined && c.status === 'Sold') return tab === 'all' || tab === stickyTab;
+    const def = this.tabs.find(t => t.key === tab);
+    if (!def?.statuses) return !EXCLUDED_FROM_ALL.has(c.status);
+    return def.statuses.includes(c.status);
+  }
+
   get sortedComputers(): Computer[] {
-    if (!this.sortColumn) return this.computers;
+    const rows = this.mode === 'in-progress'
+      ? this.computers.filter(c => this.inTab(c, this.activeTab))
+      : this.computers;
+    // Default view on the in-progress page: computers with payments first.
+    const paidFirst = this.mode === 'in-progress' && !this.userSorted;
+    if (!this.sortColumn && !paidFirst) return rows;
     const col = this.sortColumn;
     const dir = this.sortDir === 'asc' ? 1 : -1;
-    return [...this.computers].sort((a, b) => {
+    return [...rows].sort((a, b) => {
+      if (paidFirst) {
+        const paid = Number(this.hasAnyPayment(b)) - Number(this.hasAnyPayment(a));
+        if (paid !== 0) return paid;
+      }
+      if (!col) return 0;
       const av = this.sortValue(a, col);
       const bv = this.sortValue(b, col);
       if (av < bv) return -1 * dir;
@@ -819,6 +946,7 @@ export class ComputersComponent implements OnInit {
   }
 
   sortBy(column: string): void {
+    this.userSorted = true;
     if (this.sortColumn === column) {
       this.sortDir = this.sortDir === 'asc' ? 'desc' : 'asc';
     } else {
@@ -839,7 +967,7 @@ export class ComputersComponent implements OnInit {
         if (c.hasWrongLocationParts) return 1;
         return 0;
       case 'name':
-        return (c.name ?? '').toLowerCase();
+        return computerDisplayName(c).toLowerCase();
       case 'status':
         return (c.status ?? '').toLowerCase();
       case 'location':
@@ -862,6 +990,12 @@ export class ComputersComponent implements OnInit {
         return c.wagesJosh ?? 0;
       case 'profitBen':
         return c.profitBen ?? Number.NEGATIVE_INFINITY;
+      case 'wages':
+        return c.wagesNonJosh ?? 0;
+      case 'joshShare':
+        return c.joshSharePercentage ?? 0;
+      case 'benProfit':
+        return c.benProfit ?? Number.NEGATIVE_INFINITY;
       case 'paid':
         if (c.hasPayment) return 2;
         if (c.hasDeposit) return 1;
@@ -880,7 +1014,7 @@ export class ComputersComponent implements OnInit {
     this.detailLoaded.clear();
     // Preserve Sold rows the user marked during this visit (in-progress only).
     const sticky = this.mode === 'in-progress'
-      ? this.computers.filter(c => this.stickySoldIds.has(c.id))
+      ? this.computers.filter(c => this.stickySoldTabs.has(c.id))
       : [];
     const filters: Record<string, string | number | boolean | undefined> = {};
     if (this.mode === 'sold') {
@@ -889,9 +1023,10 @@ export class ComputersComponent implements OnInit {
     } else {
       // Never include sold on the in-progress page. Marking a row Sold updates
       // it in place and leaves it visible until the page is left/reloaded.
+      // Traded/Personal are always loaded; tabs filter client-side.
       filters['includeSold'] = false;
-      filters['includeTraded'] = this.includeTraded;
-      filters['includePersonal'] = this.includePersonal;
+      filters['includeTraded'] = true;
+      filters['includePersonal'] = true;
     }
     if (this.search) filters[this.searchField] = this.search;
     this.api.getComputers(filters).subscribe({
@@ -925,6 +1060,13 @@ export class ComputersComponent implements OnInit {
       },
       error: () => this.snack.open('Failed to refresh computer', 'OK')
     });
+  }
+
+  /** Refresh rows on this page (e.g. Planned PCs that just gave up a part). */
+  private refreshListedComputers(ids: number[]): void {
+    for (const id of ids) {
+      if (this.computers.some(c => c.id === id)) this.refreshComputer(id);
+    }
   }
 
   private normalizeComputer(c: Computer): Computer {
@@ -969,9 +1111,21 @@ export class ComputersComponent implements OnInit {
     return parts.some(p => this.isWrongLocation(computerLocation, p.location));
   }
 
+  hasBulk(c: Computer): boolean {
+    return !!c.bulkDesc?.trim() || c.bulkCost != null;
+  }
+
+  hasAnyPayment(c: Computer): boolean {
+    return !!(c.hasPayment || c.hasDeposit);
+  }
+
+  private markStickySold(id: number): void {
+    if (!this.stickySoldTabs.has(id)) this.stickySoldTabs.set(id, this.activeTab);
+  }
+
   private noteIfSold(computer: Computer, status?: string | null): void {
     if (this.mode === 'in-progress' && (status ?? computer.status) === 'Sold') {
-      this.stickySoldIds.add(computer.id);
+      this.markStickySold(computer.id);
     }
   }
 
@@ -1048,7 +1202,7 @@ export class ComputersComponent implements OnInit {
 
   openPriceEdit(computer: Computer): void {
     const ref = this.dialog.open(PriceEditDialogComponent, {
-      data: { name: computer.name, price: computer.price },
+      data: { name: computerDisplayName(computer), price: computer.price },
       width: '320px'
     });
     ref.afterClosed().subscribe((price: number | null | undefined) => {
@@ -1058,8 +1212,10 @@ export class ComputersComponent implements OnInit {
           computer.price = res.price;
           computer.tax = res.tax;
           // Price is tax-inclusive: pretax − parts cost − payment fees.
+          const oldProfit = computer.profit ?? 0;
           computer.profit = (res.price ?? 0) - (res.tax ?? 0) - (computer.partsCost ?? 0)
             - (computer.paymentFees ?? 0);
+          computer.benProfit = (computer.benProfit ?? 0) + (computer.profit - oldProfit);
           computer.profitBen = (computer.profit ?? 0)
             - (computer.wagesBranden ?? 0) - (computer.wagesJosh ?? 0);
           this.snack.open('Price updated', undefined, { duration: 1500 });
@@ -1082,22 +1238,21 @@ export class ComputersComponent implements OnInit {
     partsRef.afterClosed().subscribe(partsResult => {
       if (!partsResult) return;
       this.openComputerDialog(null, {
-        presetName: partsResult.presetName,
-        partIds: partsResult.partIds
+        partIds: partsResult.partIds,
+        takenFromIds: partsResult.takenFromIds
       });
     });
   }
 
   openComputerDialog(
     computer: Computer | null,
-    createOpts?: { presetName?: string; partIds?: number[] }
+    createOpts?: { partIds?: number[]; takenFromIds?: number[] }
   ): void {
     if (!this.lookups) return;
     const ref = this.dialog.open(ComputerDialogComponent, {
       data: {
         computer,
-        lookups: this.lookups,
-        presetName: createOpts?.presetName
+        lookups: this.lookups
       },
       width: '520px',
       maxWidth: '95vw',
@@ -1111,7 +1266,7 @@ export class ComputersComponent implements OnInit {
       req.subscribe({
         next: saved => {
           if (computer && saved?.status === 'Sold') this.noteIfSold(computer, saved.status);
-          else if (result.status === 'Sold' && result.id) this.stickySoldIds.add(result.id);
+          else if (result.status === 'Sold' && result.id) this.markStickySold(result.id);
 
           const newId = saved?.id ?? result.id;
           const partIds = createOpts?.partIds ?? [];
@@ -1120,6 +1275,7 @@ export class ComputersComponent implements OnInit {
               next: () => {
                 this.snack.open('Computer created with parts', undefined, { duration: 2000 });
                 this.insertOrRefreshComputer(newId);
+                this.refreshListedComputers(createOpts?.takenFromIds ?? []);
               },
               error: err => {
                 this.snack.open(err.error?.message ?? 'Computer created but assigning parts failed', 'OK');
@@ -1207,14 +1363,18 @@ export class ComputersComponent implements OnInit {
       data: { computer, lookups: this.lookups },
       maxHeight: '90vh'
     });
-    ref.afterClosed().subscribe((result: { partIds: number[]; placeholders?: unknown } | number[] | undefined) => {
+    ref.afterClosed().subscribe((result: {
+      partIds: number[]; placeholders?: unknown; takenFromIds?: number[]
+    } | number[] | undefined) => {
       if (!result) return;
       const partIds = Array.isArray(result) ? result : result.partIds;
       if (!partIds) return;
+      const takenFromIds = Array.isArray(result) ? [] : result.takenFromIds ?? [];
       this.api.assignParts(computer.id, partIds).subscribe({
         next: () => {
           this.snack.open('Parts updated', undefined, { duration: 2000 });
           this.refreshComputer(computer.id);
+          this.refreshListedComputers(takenFromIds);
         },
         error: err => this.snack.open(err.error?.message ?? 'Failed to update parts', 'OK')
       });
@@ -1304,7 +1464,7 @@ export class ComputersComponent implements OnInit {
   }
 
   deleteComputer(computer: Computer): void {
-    if (!confirm(`Delete "${computer.name}"? Its parts will be released back to inventory.`)) return;
+    if (!confirm(`Delete "${computerDisplayName(computer)}"? Its parts will be released back to inventory.`)) return;
     this.api.deleteComputer(computer.id).subscribe({
       next: () => {
         this.snack.open('Computer deleted', undefined, { duration: 2000 });
@@ -1337,7 +1497,7 @@ export class ComputersComponent implements OnInit {
   private removeComputerFromList(id: number): void {
     this.computers = this.computers.filter(c => c.id !== id);
     this.detailLoaded.delete(id);
-    this.stickySoldIds.delete(id);
+    this.stickySoldTabs.delete(id);
     if (this.expandedId === id) this.expandedId = null;
     if (this.detailLoadingId === id) this.detailLoadingId = null;
   }

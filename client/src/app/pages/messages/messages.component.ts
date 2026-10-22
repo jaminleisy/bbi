@@ -17,6 +17,7 @@ import { ApiService } from '../../services/api.service';
 import { AuthService } from '../../services/auth.service';
 import { MessengerNotificationsService } from '../../services/messenger-notifications.service';
 import { Computer, MessengerMessage, MessengerThread } from '../../models';
+import { computerDisplayName } from '../../part-display';
 
 /**
  * Marketplace / Messenger inbox. Talks to /api/messenger/* and shows threads
@@ -137,7 +138,7 @@ import { Computer, MessengerMessage, MessengerThread } from '../../models';
                   <mat-option [value]="null">(none)</mat-option>
                   @for (c of computers; track c.id) {
                     <mat-option [value]="c.id">
-                      {{ c.name }} <span class="opt-status">— {{ c.status }}</span>
+                      {{ computerDisplayName(c) }} <span class="opt-status">— {{ c.status }}</span>
                     </mat-option>
                   }
                 </mat-select>
@@ -427,6 +428,7 @@ import { Computer, MessengerMessage, MessengerThread } from '../../models';
   `]
 })
 export class MessagesComponent implements OnInit, OnDestroy, AfterViewChecked {
+  computerDisplayName = computerDisplayName;
   threads: MessengerThread[] = [];
   computers: Computer[] = [];
   selectedThread: MessengerThread | null = null;
@@ -616,8 +618,8 @@ export class MessagesComponent implements OnInit, OnDestroy, AfterViewChecked {
         const excluded = new Set(['Sold', 'Traded', 'Returned']);
         this.computers = (list ?? [])
           .filter(c => !excluded.has(c.status))
-          .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
-        for (const c of list ?? []) this.computerNameCache.set(c.id, c.name);
+          .sort((a, b) => computerDisplayName(a).localeCompare(computerDisplayName(b), undefined, { sensitivity: 'base' }));
+        for (const c of list ?? []) this.computerNameCache.set(c.id, computerDisplayName(c));
       },
       error: () => { /* silent — link dropdown just stays empty */ }
     });

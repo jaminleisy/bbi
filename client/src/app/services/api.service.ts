@@ -283,9 +283,10 @@ export class ApiService {
     return this.http.get<PartType[]>(`${this.api}/builds/part-types`);
   }
 
-  getBuildUnassignedParts(type?: string): Observable<BuildUnassignedPart[]> {
+  getBuildUnassignedParts(type?: string, includePlanned = false): Observable<BuildUnassignedPart[]> {
     let params = new HttpParams();
     if (type) params = params.set('type', type);
+    if (includePlanned) params = params.set('includePlanned', 'true');
     return this.http.get<BuildUnassignedPart[]>(`${this.api}/builds/unassigned-parts`, { params });
   }
 

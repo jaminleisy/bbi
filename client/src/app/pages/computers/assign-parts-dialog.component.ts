@@ -13,7 +13,7 @@ import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { ApiService } from '../../services/api.service';
 import { Computer, Lookups, Part, PartPlaceholder } from '../../models';
-import { isScamPart, isUsedUntested, openPartOrderUrl, partDisplayLabel, sortByPartType, sortTypeNames } from '../../part-display';
+import { computerDisplayName, confirmReassignFromPlanned, isScamPart, isUsedUntested, openPartOrderUrl, partDisplayLabel, sortByPartType, sortTypeNames } from '../../part-display';
 
 @Component({
   selector: 'app-assign-parts-dialog',
@@ -22,7 +22,7 @@ import { isScamPart, isUsedUntested, openPartOrderUrl, partDisplayLabel, sortByP
     MatButtonModule, MatCheckboxModule, MatIconModule, MatChipsModule, MatSelectModule,
     MatSnackBarModule, MatTooltipModule],
   template: `
-    <h2 mat-dialog-title>Edit Parts — {{ data.computer.name }}</h2>
+    <h2 mat-dialog-title>Edit Parts — {{ computerDisplayName(data.computer) }}</h2>
     <mat-dialog-content>
       @if (data.computer.type === 'PC') {
         <div style="margin-bottom:12px">
@@ -88,6 +88,9 @@ import { isScamPart, isUsedUntested, openPartOrderUrl, partDisplayLabel, sortByP
           <mat-icon matIconSuffix>search</mat-icon>
         }
       </mat-form-field>
+      <mat-checkbox class="show-planned" [(ngModel)]="showPlanned">
+        Show parts assigned to planned PCs
+      </mat-checkbox>
 
       <div class="parts-list">
         @for (part of filteredParts; track part.id) {
@@ -104,6 +107,9 @@ import { isScamPart, isUsedUntested, openPartOrderUrl, partDisplayLabel, sortByP
                 <mat-icon class="needs-test-icon" matTooltip="Used — needs testing">pending_actions</mat-icon>
               }
               @if (!part.received) { <span class="warn-text">[not received]</span> }
+              @if (isOnOtherComputer(part)) {
+                <span class="planned-on">On planned: {{ part.computerName }}</span>
+              }
             </mat-checkbox>
           </div>
         }
@@ -161,6 +167,17 @@ import { isScamPart, isUsedUntested, openPartOrderUrl, partDisplayLabel, sortByP
       padding: 1px 7px;
       vertical-align: middle;
     }
+    .planned-on {
+      display: inline-block;
+      margin-left: 6px;
+      font-size: 11px;
+      background: #fff3e0;
+      color: #e65100;
+      border-radius: 8px;
+      padding: 1px 7px;
+      vertical-align: middle;
+    }
+    .show-planned { display: block; margin: -8px 0 8px; }
     .needs-test-icon {
       font-size: 18px;
       width: 18px;
@@ -174,6 +191,7 @@ import { isScamPart, isUsedUntested, openPartOrderUrl, partDisplayLabel, sortByP
   `]
 })
 export class AssignPartsDialogComponent implements OnInit {
+  computerDisplayName = computerDisplayName;
   partDisplayLabel = partDisplayLabel;
   isUsedUntested = isUsedUntested;
   availableParts: Part[] = [];
@@ -181,6 +199,7 @@ export class AssignPartsDialogComponent implements OnInit {
   /** Parts currently on this computer (stable list order; independent of checkbox toggles). */
   private assignedIds = new Set<number>();
   filter = '';
+  showPlanned = false;
   requiredTypes: string[] = [];
   allTypes: string[] = [];
   placeholders: PartPlaceholder[] = [];
@@ -206,9 +225,15 @@ export class AssignPartsDialogComponent implements OnInit {
   }
 
   ngOnInit(): void {
-    this.apiService.getParts({ unassigned: true, excludeBad: true, excludeScam: true }).subscribe(parts => {
+    this.apiService.getParts({
+      unassigned: true, includePlanned: true, excludeBad: true, excludeScam: true
+    }).subscribe(parts => {
       const owned = this.data.computer.parts ?? [];
-      this.availableParts = [...owned, ...parts.filter(p => !isScamPart(p))];
+      const ownedIds = new Set(owned.map(p => p.id));
+      this.availableParts = [
+        ...owned,
+        ...parts.filter(p => !ownedIds.has(p.id) && p.computerId !== this.data.computer.id && !isScamPart(p))
+      ];
     });
     // Refresh placeholders in case the expand panel hasn't loaded detail yet.
     this.apiService.getComputer(this.data.computer.id).subscribe(detail => {
@@ -239,7 +264,10 @@ export class AssignPartsDialogComponent implements OnInit {
           (p.color ?? '').toLowerCase().includes(f) ||
           (p.location ?? '').toLowerCase().includes(f));
     // Hide scam parts from search unless already assigned to this computer.
-    const visible = list.filter(p => this.assignedIds.has(p.id) || !isScamPart(p));
+    // Parts on other (Planned) PCs show only when opted in, or once picked.
+    const visible = list.filter(p =>
+      this.assignedIds.has(p.id) ||
+      (!isScamPart(p) && (this.showPlanned || !this.isOnOtherComputer(p) || this.selectedIds.has(p.id))));
     const assigned = visible.filter(p => this.assignedIds.has(p.id));
     const other = visible.filter(p => !this.assignedIds.has(p.id));
     return [...sortByPartType(assigned), ...sortByPartType(other)];
@@ -259,7 +287,12 @@ export class AssignPartsDialogComponent implements OnInit {
       }
       return;
     }
+    if (!this.selectedIds.has(part.id) && !confirmReassignFromPlanned(part, this.data.computer.id)) return;
     this.toggle(part.id);
+  }
+
+  isOnOtherComputer(part: Part): boolean {
+    return part.computerId != null && part.computerId !== this.data.computer.id;
   }
 
   toggle(id: number): void {
@@ -299,6 +332,9 @@ export class AssignPartsDialogComponent implements OnInit {
   }
 
   save(): void {
-    this.dialogRef.close({ partIds: [...this.selectedIds], placeholders: this.placeholders });
+    const takenFromIds = [...new Set(this.availableParts
+      .filter(p => this.selectedIds.has(p.id) && this.isOnOtherComputer(p))
+      .map(p => p.computerId!))];
+    this.dialogRef.close({ partIds: [...this.selectedIds], placeholders: this.placeholders, takenFromIds });
   }
 }

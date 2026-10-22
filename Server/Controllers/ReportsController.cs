@@ -64,6 +64,10 @@ public class ReportsController : ControllerBase
             {
                 c.Id,
                 c.Name,
+                NameParts = c.Parts.Select(p => new
+                {
+                    p.Type, p.Manufacturer, p.ModelNumber, p.Color
+                }).ToList(),
                 c.SoldDate,
                 c.CustomerName,
                 c.Price,
@@ -188,7 +192,8 @@ public class ReportsController : ControllerBase
                 return new
                 {
                     c.Id,
-                    c.Name,
+                    Name = ComputerDisplayName.From(c.Name, c.NameParts.Select(p =>
+                        new ComputerDisplayName.PartBits(p.Type, p.Manufacturer, p.ModelNumber, p.Color))),
                     SoldDate = c.SoldDate,
                     c.CustomerName,
                     Price = price,

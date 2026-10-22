@@ -9,7 +9,7 @@ import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatSelectModule } from '@angular/material/select';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { ApiService } from '../../services/api.service';
-import { partDisplayLabel, groupIdenticalParts, partQtyLabel, GroupedPart } from '../../part-display';
+import { computerDisplayName, partDisplayLabel, groupIdenticalParts, partQtyLabel, GroupedPart } from '../../part-display';
 import { BuildSummary, BuildPartSummary } from '../../models';
 
 @Component({
@@ -60,7 +60,7 @@ import { BuildSummary, BuildPartSummary } from '../../models';
                     <mat-icon class="loc-warn"
                               [matTooltip]="wrongLocationTooltip(b)">warning</mat-icon>
                   }
-                  {{ b.name }}
+                  {{ computerDisplayName(b) }}
                 </h2>
                 <div class="card-meta">
                   <span class="status-badge status-{{ statusClass(b.status) }}">{{ b.status }}</span>
@@ -387,6 +387,7 @@ import { BuildSummary, BuildPartSummary } from '../../models';
   `]
 })
 export class BuildsComponent implements OnInit {
+  computerDisplayName = computerDisplayName;
   /** Sentinel so "(all)" and Unassigned aren't both empty-string values. */
   private static readonly UnassignedKey = '__unassigned__';
 

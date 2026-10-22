@@ -6,7 +6,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { ApiService } from '../../services/api.service';
 import { PublicComputer } from '../../models';
-import { partModelText } from '../../part-display';
+import { computerDisplayName, partModelText } from '../../part-display';
 
 @Component({
   selector: 'app-public-build',
@@ -28,7 +28,7 @@ import { partModelText } from '../../part-display';
           <mat-card-header>
             <mat-card-title style="font-size:28px">
               <mat-icon style="vertical-align:middle;margin-right:8px">computer</mat-icon>
-              {{ build.name }}
+              {{ computerDisplayName(build) }}
             </mat-card-title>
             @if (build.expectedCompletionDate) {
               <mat-card-subtitle style="margin-top:8px">
@@ -82,6 +82,7 @@ import { partModelText } from '../../part-display';
   `]
 })
 export class PublicBuildComponent implements OnInit {
+  computerDisplayName = computerDisplayName;
   partModelText = partModelText;
   build: PublicComputer | null = null;
   loading = true;

@@ -91,6 +91,8 @@ export interface PartPlaceholder {
 export interface Computer {
   id: number;
   name: string;
+  /** Generated when `name` is blank (case/GPU, or Unnamed + a part). */
+  displayName?: string | null;
   description?: string | null;
   type: 'PC' | 'Parts';
   status: string;
@@ -129,6 +131,12 @@ export interface Computer {
   wagesBranden?: number;
   wagesJosh?: number;
   profitBen?: number;
+  /** Wages paid to anyone except Josh. */
+  wagesNonJosh?: number;
+  /** Josh's total share percentage; null when he has no share. */
+  joshSharePercentage?: number | null;
+  /** Profit − all wages + wages paid to Ben L. */
+  benProfit?: number;
   isShipping?: boolean;
   missingRequiredTypes?: string[];
   /** True when at least one assigned part's location differs from the computer location. */
@@ -233,6 +241,9 @@ export interface BuildUnassignedPart {
   received: boolean;
   condition?: string | null;
   testedDate?: string | null;
+  /** Set when the part is currently on a Planned computer (includePlanned lists only). */
+  computerId?: number | null;
+  computerName?: string | null;
 }
 
 export const STATUSES = ['Planned', 'In-progress', 'Built', 'Active', 'Sold', 'Returned', 'Needs repair', 'Traded', 'Personal'];

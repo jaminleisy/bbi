@@ -58,6 +58,16 @@ public class ComputersController : ControllerBase
         ["Sold"] = 9
     };
 
+    /// <summary>Owner's user id; wages paid to this user count toward Ben Profit.</summary>
+    private const string BenUserId = "Ben L";
+
+    private static bool IsJosh(string builderUserId) =>
+        builderUserId.StartsWith("Josh B", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Profit minus all wages, with wages paid to Ben L added back.</summary>
+    private static decimal BenProfitOf(decimal profit, decimal allWages, decimal benWages) =>
+        profit - allWages + benWages;
+
     private readonly AppDbContext _db;
     private readonly PartSlotService _slots;
 
@@ -154,31 +164,53 @@ public class ComputersController : ControllerBase
                 WagesJosh = c.Wages
                     .Where(w => w.BuilderUserId == "Josh B" || w.BuilderUserId.StartsWith("Josh B"))
                     .Sum(w => (decimal?)w.Amount) ?? 0,
-                PartTypes = c.Type == "PC"
-                    ? c.Parts.Select(p => p.Type).ToList()
-                    : new List<string>(),
+                WagesNonJosh = c.Wages
+                    .Where(w => !(w.BuilderUserId == "Josh B" || w.BuilderUserId.StartsWith("Josh B")))
+                    .Sum(w => (decimal?)w.Amount) ?? 0,
+                WagesBenL = c.Wages
+                    .Where(w => w.BuilderUserId == BenUserId)
+                    .Sum(w => (decimal?)w.Amount) ?? 0,
+                JoshSharePercentage = c.Shares
+                    .Where(s => s.BuilderUserId == "Josh B" || s.BuilderUserId.StartsWith("Josh B"))
+                    .Sum(s => (decimal?)s.Percentage),
+                // One Parts projection (not three) so EF does not join Parts repeatedly.
+                PartsMeta = c.Parts.Select(p => new { p.Type, p.Location }).ToList(),
                 PlaceholderTypes = c.Type == "PC"
                     ? c.Placeholders.Select(ph => ph.Type).ToList()
-                    : new List<string>(),
-                PartLocations = c.Parts.Select(p => p.Location).ToList()
+                    : new List<string>()
             })
             .ToListAsync();
 
+        var unnamedIds = rows
+            .Where(c => string.IsNullOrWhiteSpace(c.Name))
+            .Select(c => c.Id);
+        var generatedNames = await ComputerDisplayName.MapUnnamedAsync(_db, unnamedIds);
+
         var result = rows.Select(c =>
         {
-            var presentTypes = c.PartTypes.Concat(c.PlaceholderTypes).ToHashSet();
+            var presentTypes = c.PartsMeta.Select(p => p.Type).Concat(c.PlaceholderTypes).ToHashSet();
             var missingRequired = c.Type == "PC"
                 ? requiredTypes.Where(rt => !presentTypes.Contains(rt)).ToList()
                 : new List<string>();
             // Price is tax-inclusive; profit uses pretax revenue (Price − Tax) minus fees.
             var profit = (c.Price ?? 0) - (c.Tax ?? 0) - c.PartsCost - c.PaymentFees;
             var hasWrongLocationParts = !string.IsNullOrWhiteSpace(c.Location)
-                && c.PartLocations.Any(l =>
-                    !string.Equals((l ?? "").Trim(), c.Location.Trim(), StringComparison.OrdinalIgnoreCase));
+                && c.PartsMeta.Any(p =>
+                    !string.Equals((p.Location ?? "").Trim(), c.Location.Trim(), StringComparison.OrdinalIgnoreCase));
+
+            string displayName;
+            if (!string.IsNullOrWhiteSpace(c.Name))
+                displayName = c.Name.Trim();
+            else if (generatedNames.TryGetValue(c.Id, out var generated))
+                displayName = generated;
+            else
+                displayName = "Unnamed";
 
             return new
             {
-                c.Id, c.Name, c.Description, c.Type, c.Status, c.AddedDate,
+                c.Id, c.Name,
+                DisplayName = displayName,
+                c.Description, c.Type, c.Status, c.AddedDate,
                 c.AddedUserId,
                 AddedUserName = c.AddedUserId != null && userNames.TryGetValue(c.AddedUserId, out var an) ? an : null,
                 c.BuilderUserId,
@@ -199,6 +231,9 @@ public class ComputersController : ControllerBase
                 c.WagesBranden,
                 c.WagesJosh,
                 ProfitBen = profit - c.WagesBranden - c.WagesJosh,
+                c.WagesNonJosh,
+                c.JoshSharePercentage,
+                BenProfit = BenProfitOf(profit, c.WagesNonJosh + c.WagesJosh, c.WagesBenL),
                 IsShipping = !string.IsNullOrEmpty(c.TrackingNumber) || !string.IsNullOrEmpty(c.CustomerAddress1),
                 MissingRequiredTypes = missingRequired,
                 HasWrongLocationParts = hasWrongLocationParts,
@@ -250,6 +285,12 @@ public class ComputersController : ControllerBase
             .Where(w => w.BuilderUserId.Equals("Josh B", StringComparison.OrdinalIgnoreCase)
                         || w.BuilderUserId.StartsWith("Josh B", StringComparison.OrdinalIgnoreCase))
             .Sum(w => w.Amount);
+        var wagesNonJosh = computer.Wages.Where(w => !IsJosh(w.BuilderUserId)).Sum(w => w.Amount);
+        var wagesBenL = computer.Wages
+            .Where(w => w.BuilderUserId.Equals(BenUserId, StringComparison.OrdinalIgnoreCase))
+            .Sum(w => w.Amount);
+        var joshShares = computer.Shares.Where(s => IsJosh(s.BuilderUserId)).ToList();
+        decimal? joshSharePercentage = joshShares.Count > 0 ? joshShares.Sum(s => s.Percentage) : null;
         var profit = (computer.Price ?? 0) - (computer.Tax ?? 0) - partsCost - paymentFees;
         var buildLoc = (computer.Location ?? "").Trim();
         var hasWrongLocationParts = buildLoc.Length > 0
@@ -289,7 +330,9 @@ public class ComputersController : ControllerBase
 
         return new
         {
-            computer.Id, computer.Name, computer.Description, computer.Type, computer.Status,
+            computer.Id, computer.Name,
+            DisplayName = ComputerDisplayName.From(computer),
+            computer.Description, computer.Type, computer.Status,
             computer.AddedDate, computer.AddedUserId,
             AddedUserName = addedUserName,
             computer.BuilderUserId,
@@ -310,6 +353,9 @@ public class ComputersController : ControllerBase
             WagesBranden = wagesBranden,
             WagesJosh = wagesJosh,
             ProfitBen = profit - wagesBranden - wagesJosh,
+            WagesNonJosh = wagesNonJosh,
+            JoshSharePercentage = joshSharePercentage,
+            BenProfit = BenProfitOf(profit, wagesNonJosh + wagesJosh, wagesBenL),
             IsShipping = !string.IsNullOrEmpty(computer.TrackingNumber)
                          || !string.IsNullOrEmpty(computer.CustomerAddress1),
             MissingRequiredTypes = missingRequired,
@@ -352,7 +398,7 @@ public class ComputersController : ControllerBase
 
         return new
         {
-            computer.Name,
+            Name = ComputerDisplayName.From(computer),
             computer.ExpectedCompletionDate,
             Parts = computer.Parts
                 .OrderByPartType(p => p.Type)
@@ -465,10 +511,12 @@ public class ComputersController : ControllerBase
         var computer = await _db.Computers.Include(c => c.Parts).FirstOrDefaultAsync(c => c.Id == id);
         if (computer is null) return NotFound();
 
-        var newParts = await _db.Parts.Where(p => request.PartIds.Contains(p.Id)).ToListAsync();
+        var newParts = await _db.Parts.Include(p => p.Computer)
+            .Where(p => request.PartIds.Contains(p.Id)).ToListAsync();
 
-        // Check parts not already in another computer
-        var conflict = newParts.FirstOrDefault(p => p.ComputerId is not null && p.ComputerId != id);
+        // Parts on another computer may only be taken from a Planned one.
+        var conflict = newParts.FirstOrDefault(p =>
+            p.ComputerId is not null && p.ComputerId != id && p.Computer?.Status != "Planned");
         if (conflict is not null)
             return BadRequest(new { message = $"Part '{conflict.Manufacturer} {conflict.ModelNumber}' is already assigned to another computer." });
 
@@ -719,8 +767,7 @@ public class ComputersController : ControllerBase
 
     private async Task<string?> Validate(Computer computer)
     {
-        if (string.IsNullOrWhiteSpace(computer.Name))
-            return "Name is required.";
+        computer.Name = computer.Name?.Trim() ?? "";
         if (!ValidTypes.Contains(computer.Type))
             return $"Type must be one of: {string.Join(", ", ValidTypes)}.";
         if (!ValidStatuses.Contains(computer.Status))

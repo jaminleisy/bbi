@@ -1,6 +1,7 @@
 using BenBotInventory.Server.Authorization;
 using BenBotInventory.Server.Data;
 using BenBotInventory.Server.Models;
+using BenBotInventory.Server.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -37,7 +38,8 @@ public class WagesController : ControllerBase
             .ThenByDescending(w => w.Id)
             .ToListAsync();
 
-        var computerNames = await _db.Computers.Select(c => new { c.Id, c.Name }).ToListAsync();
+        var nameMap = await ComputerDisplayName.MapAsync(
+            _db, wages.Where(w => w.ComputerId != null).Select(w => w.ComputerId!.Value));
 
         return wages.Select(w => new
         {
@@ -45,7 +47,7 @@ public class WagesController : ControllerBase
             w.BuilderUserId,
             BuilderName = users.FirstOrDefault(u => u.Id == w.BuilderUserId)?.Name,
             w.ComputerId,
-            ComputerName = computerNames.FirstOrDefault(c => c.Id == w.ComputerId)?.Name,
+            ComputerName = w.ComputerId != null && nameMap.TryGetValue(w.ComputerId.Value, out var n) ? n : null,
             w.Amount,
             w.PaidDate,
             w.PaidMethod,
