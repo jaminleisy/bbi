@@ -25,6 +25,7 @@ import { ShareDialogComponent } from './share-dialog.component';
 import { AssignPartsDialogComponent } from './assign-parts-dialog.component';
 import { PriceEditDialogComponent } from './price-edit-dialog.component';
 import { NewComputerPartsDialogComponent } from './new-computer-parts-dialog.component';
+import { MissingPartsIconComponent } from '../../missing-parts-icon.component';
 
 export type ComputersPageMode = 'in-progress' | 'sold';
 
@@ -49,7 +50,8 @@ const EXCLUDED_FROM_ALL = new Set(['Traded', 'Personal']);
   standalone: true,
   imports: [CommonModule, FormsModule, MatTableModule, MatButtonModule, MatIconModule,
     MatFormFieldModule, MatInputModule, MatSelectModule, MatTabsModule,
-    MatDialogModule, MatSnackBarModule, MatTooltipModule, MatChipsModule, MatProgressSpinnerModule],
+    MatDialogModule, MatSnackBarModule, MatTooltipModule, MatChipsModule, MatProgressSpinnerModule,
+    MissingPartsIconComponent],
   template: `
     <div class="page-container wide">
       <div class="header-row">
@@ -143,13 +145,14 @@ const EXCLUDED_FROM_ALL = new Set(['Traded', 'Personal']);
             </th>
             <td mat-cell *matCellDef="let c" class="warn-cell">
               @if (c.missingRequiredTypes?.length && !c.ignoreIncomplete) {
-                <mat-icon class="warn-text" [matTooltip]="'Missing required parts: ' + c.missingRequiredTypes.join(', ')">warning</mat-icon>
+                <app-missing-parts-icon
+                  [matTooltip]="'Missing required parts: ' + c.missingRequiredTypes.join(', ')"></app-missing-parts-icon>
               }
               @if (c.hasWrongLocationParts) {
-                <mat-icon class="loc-warn"
+                <mat-icon class="loc-warn" fontSet="material-symbols"
                           [matTooltip]="c.location
                             ? 'One or more parts are not at ' + c.location
-                            : 'One or more parts are not at the computer location'">warning</mat-icon>
+                            : 'One or more parts are not at the computer location'">trolley</mat-icon>
               }
             </td>
           </ng-container>
@@ -250,31 +253,6 @@ const EXCLUDED_FROM_ALL = new Set(['Traded', 'Personal']);
               <span [class.ok-text]="c.profit > 0" [class.warn-text]="c.profit < 0">
                 {{ c.profit | currency }}
               </span>@if (c.status !== 'Sold') { <small> (est)</small> }
-            </td>
-          </ng-container>
-
-          <ng-container matColumnDef="wagesBranden">
-            <th mat-header-cell *matHeaderCellDef (click)="sortBy('wagesBranden')" class="sortable-header">
-              Wages Branden <mat-icon class="sort-icon">{{ sortIcon('wagesBranden') }}</mat-icon>
-            </th>
-            <td mat-cell *matCellDef="let c">{{ (c.wagesBranden || 0) | currency }}</td>
-          </ng-container>
-
-          <ng-container matColumnDef="wagesJosh">
-            <th mat-header-cell *matHeaderCellDef (click)="sortBy('wagesJosh')" class="sortable-header">
-              Wages Josh <mat-icon class="sort-icon">{{ sortIcon('wagesJosh') }}</mat-icon>
-            </th>
-            <td mat-cell *matCellDef="let c">{{ (c.wagesJosh || 0) | currency }}</td>
-          </ng-container>
-
-          <ng-container matColumnDef="profitBen">
-            <th mat-header-cell *matHeaderCellDef (click)="sortBy('profitBen')" class="sortable-header">
-              Profit Ben <mat-icon class="sort-icon">{{ sortIcon('profitBen') }}</mat-icon>
-            </th>
-            <td mat-cell *matCellDef="let c">
-              <span [class.ok-text]="(c.profitBen ?? 0) > 0" [class.warn-text]="(c.profitBen ?? 0) < 0">
-                {{ c.profitBen | currency }}
-              </span>
             </td>
           </ng-container>
 
@@ -401,7 +379,7 @@ const EXCLUDED_FROM_ALL = new Set(['Traded', 'Personal']);
                   </div>
                   @if (c.missingRequiredTypes?.length && !c.ignoreIncomplete) {
                     <div class="warn-text" style="margin-bottom:8px">
-                      <mat-icon style="vertical-align:middle;font-size:18px">warning</mat-icon>
+                      <app-missing-parts-icon compact></app-missing-parts-icon>
                       Missing required: {{ c.missingRequiredTypes.join(', ') }}
                     </div>
                   }
@@ -441,8 +419,8 @@ const EXCLUDED_FROM_ALL = new Set(['Traded', 'Personal']);
                           <td>
                             {{ groupField(g, 'location') }}
                             @if (groupHasWrongLocation(c, g)) {
-                              <mat-icon class="loc-warn-inline"
-                                        [matTooltip]="'Should be at ' + (c.location || 'computer location')">warning</mat-icon>
+                              <mat-icon class="loc-warn-inline" fontSet="material-symbols"
+                                        [matTooltip]="'Should be at ' + (c.location || 'computer location')">trolley</mat-icon>
                             }
                           </td>
                           <td>{{ groupReceived(g) }}</td>
@@ -584,7 +562,7 @@ const EXCLUDED_FROM_ALL = new Set(['Traded', 'Personal']);
           <tr mat-row *matRowDef="let c; columns: displayedColumns;"
               class="computer-row"
               [class.expanded-row]="expandedId === c.id"
-              [class.paid-row]="mode === 'in-progress' && hasAnyPayment(c)"
+              [class.paid-row]="mode === 'sold' || hasAnyPayment(c)"
               (click)="toggleExpand(c)"></tr>
           <tr mat-row *matRowDef="let row; columns: ['expandedDetail']" class="detail-row"></tr>
         </table>
@@ -761,7 +739,7 @@ const EXCLUDED_FROM_ALL = new Set(['Traded', 'Personal']);
       color: #f9a825;
       margin-left: 2px;
     }
-    .warn-cell .warn-text {
+    .warn-cell app-missing-parts-icon {
       vertical-align: middle;
     }
     .wrong-location-row td { background: #fff8e1; }
@@ -859,7 +837,7 @@ export class ComputersComponent implements OnInit {
     this.displayedColumns = this.mode === 'sold'
       ? [
           'warning', 'name', 'builder',
-          'partsCost', 'price', 'soldDate', 'tax', 'profit', 'wagesBranden', 'wagesJosh', 'profitBen',
+          'partsCost', 'price', 'soldDate', 'tax', 'profit', 'wages', 'joshShare', 'benProfit',
           'paid', 'customer', 'actions'
         ]
       : [
@@ -984,12 +962,6 @@ export class ComputersComponent implements OnInit {
         return c.tax ?? Number.NEGATIVE_INFINITY;
       case 'profit':
         return c.profit ?? Number.NEGATIVE_INFINITY;
-      case 'wagesBranden':
-        return c.wagesBranden ?? 0;
-      case 'wagesJosh':
-        return c.wagesJosh ?? 0;
-      case 'profitBen':
-        return c.profitBen ?? Number.NEGATIVE_INFINITY;
       case 'wages':
         return c.wagesNonJosh ?? 0;
       case 'joshShare':

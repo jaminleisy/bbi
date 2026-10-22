@@ -57,8 +57,8 @@ import { BuildSummary, BuildPartSummary } from '../../models';
                               matTooltip="One or more parts have not arrived">schedule</mat-icon>
                   }
                   @if (hasWrongLocationParts(b)) {
-                    <mat-icon class="loc-warn"
-                              [matTooltip]="wrongLocationTooltip(b)">warning</mat-icon>
+                    <mat-icon class="loc-warn" fontSet="material-symbols"
+                              [matTooltip]="wrongLocationTooltip(b)">trolley</mat-icon>
                   }
                   {{ computerDisplayName(b) }}
                 </h2>
@@ -88,8 +88,8 @@ import { BuildSummary, BuildPartSummary } from '../../models';
                                       matTooltip="Not yet received">schedule</mat-icon>
                           }
                           @if (groupHasWrongLocation(b, g)) {
-                            <mat-icon class="part-loc-warn"
-                                      [matTooltip]="wrongPartLocationTooltip(g)">warning</mat-icon>
+                            <mat-icon class="part-loc-warn" fontSet="material-symbols"
+                                      [matTooltip]="wrongPartLocationTooltip(g)">trolley</mat-icon>
                           }
                         </span>
                       </li>

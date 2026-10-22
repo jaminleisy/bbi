@@ -78,8 +78,8 @@ import { PartDialogComponent } from '../parts/part-dialog.component';
           <div class="section-head">
             <h2>Parts</h2>
             @if (hasWrongLocationParts) {
-              <mat-icon class="loc-warn"
-                        [matTooltip]="wrongLocationTooltip">warning</mat-icon>
+              <mat-icon class="loc-warn" fontSet="material-symbols"
+                        [matTooltip]="wrongLocationTooltip">trolley</mat-icon>
             }
           </div>
 
@@ -131,8 +131,8 @@ import { PartDialogComponent } from '../parts/part-dialog.component';
                       <span class="muted">—</span>
                     }
                     @if (groupHasWrongLocation(g)) {
-                      <mat-icon class="loc-warn-inline"
-                                [matTooltip]="'Should be at ' + ((build?.location ?? '').trim() || 'build location')">warning</mat-icon>
+                      <mat-icon class="loc-warn-inline" fontSet="material-symbols"
+                                [matTooltip]="'Should be at ' + ((build?.location ?? '').trim() || 'build location')">trolley</mat-icon>
                     }
                   </td>
                 </tr>
