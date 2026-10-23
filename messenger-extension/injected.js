@@ -1,10 +1,13 @@
-// Optional page-context helper. Not injected by default. If DOM scraping
-// stops being reliable, load this from content.js via a <script> element
-// so it runs in the page's own JS context (rather than the isolated
-// content-script world) and hooks fetch/WebSocket for authoritative event
-// data. Not needed for v1.
+// Runs in the page JS world so the messenger.com DevTools console can call
+// __benbot_debug() without switching to the extension isolated world.
+// Snapshot JSON is written by content.js into #__benbot_debug_json.
 
 (() => {
   'use strict';
-  // Intentionally empty — placeholder for the WebSocket/fetch hook upgrade.
+  window.__benbot_debug = () => {
+    const el = document.getElementById('__benbot_debug_json');
+    if (!el) return { error: 'content script has not published a snapshot yet — refresh this tab' };
+    try { return JSON.parse(el.textContent || 'null'); }
+    catch (e) { return { error: String(e) }; }
+  };
 })();

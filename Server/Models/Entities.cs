@@ -500,6 +500,13 @@ public class MessengerMessage
     [MaxLength(8000)]
     public string Text { get; set; } = "";
 
+    /// <summary>
+    /// Facebook / CDN URL for a photo, GIF, or video when the scraper
+    /// could see one. Encrypted chats often have no durable host URL.
+    /// </summary>
+    [MaxLength(1000)]
+    public string? MediaUrl { get; set; }
+
     public DateTime Timestamp { get; set; }
 
     public DateTime CreatedDate { get; set; } = DateTime.UtcNow;

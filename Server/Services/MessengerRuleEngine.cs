@@ -6,84 +6,72 @@ using System.Text.RegularExpressions;
 namespace BenBotInventory.Server.Services;
 
 /// <summary>
+/// A copyable reply produced by a matching <see cref="MessengerRule"/>.
+/// Nothing is sent automatically — the user pastes this into Messenger.
+/// </summary>
+public record ReplySuggestion(
+    int RuleId,
+    string RuleName,
+    string Text,
+    int IncomingMessageId,
+    string IncomingText
+);
+
+/// <summary>
 /// Evaluates enabled <see cref="MessengerRule"/>s against the newest incoming
-/// message in a thread and enqueues an auto-reply into <see cref="MessengerOutbox"/>
-/// when the first matching, non-cooldown rule fires. Invoked synchronously
-/// from the ingest endpoint so the reply is queued before the extension's
-/// next outbox poll.
+/// message in a thread and returns copyable reply suggestions. Invoked when
+/// the user opens a thread, not when the extension ingests.
 /// </summary>
 public class MessengerRuleEngine
 {
     private readonly AppDbContext _db;
-    private readonly ILogger<MessengerRuleEngine> _log;
 
-    public MessengerRuleEngine(AppDbContext db, ILogger<MessengerRuleEngine> log)
+    public MessengerRuleEngine(AppDbContext db)
     {
         _db = db;
-        _log = log;
     }
 
     /// <summary>
-    /// Process rules for a single thread. Returns the enqueued outbox id if a
-    /// rule fired, otherwise null.
+    /// Suggestions for the newest incoming message, in rule order.
+    /// Empty when the thread has no incoming message or no rule matches.
     /// </summary>
-    public async Task<int?> ProcessThreadAsync(int threadId, CancellationToken ct = default)
+    public async Task<IReadOnlyList<ReplySuggestion>> SuggestAsync(
+        int threadId, CancellationToken ct = default)
     {
         var thread = await _db.MessengerThreads
             .Include(t => t.Computer!).ThenInclude(c => c.Parts)
             .FirstOrDefaultAsync(t => t.Id == threadId, ct);
-        if (thread is null) return null;
+        if (thread is null) return Array.Empty<ReplySuggestion>();
 
-        // The message we react to is the newest INCOMING message. Ignoring
-        // outgoing messages avoids echo-loops with our own replies.
         var lastIncoming = await _db.MessengerMessages
             .Where(m => m.ThreadId == threadId && m.Direction == "incoming")
             .OrderByDescending(m => m.Timestamp)
             .FirstOrDefaultAsync(ct);
-        if (lastIncoming is null) return null;
+        if (lastIncoming is null) return Array.Empty<ReplySuggestion>();
 
         var rules = await _db.MessengerRules
             .Where(r => r.Enabled)
             .OrderBy(r => r.OrderIndex).ThenBy(r => r.Id)
             .ToListAsync(ct);
-        if (rules.Count == 0) return null;
 
+        var suggestions = new List<ReplySuggestion>();
         foreach (var rule in rules)
         {
             if (rule.RequireLinkedBuild && thread.ComputerId is null) continue;
             if (!Matches(rule, lastIncoming.Text)) continue;
 
-            // Cooldown check — per-thread, per-rule.
-            if (rule.CooldownMinutes > 0)
-            {
-                var cutoff = DateTime.UtcNow.AddMinutes(-rule.CooldownMinutes);
-                var recent = await _db.MessengerOutbox
-                    .AnyAsync(o => o.ThreadId == threadId
-                                && o.RuleId == rule.Id
-                                && o.CreatedDate >= cutoff, ct);
-                if (recent) continue;
-            }
-
             var body = Expand(rule.ResponseText, thread, lastIncoming);
             if (string.IsNullOrWhiteSpace(body)) continue;
 
-            _db.MessengerOutbox.Add(new MessengerOutbox
-            {
-                ThreadId = threadId,
-                Text = body,
-                Status = "pending",
-                RuleId = rule.Id,
-                QueuedByUserId = null   // auto-generated
-            });
-            rule.LastFiredDate = DateTime.UtcNow;
-            await _db.SaveChangesAsync(ct);
-
-            _log.LogInformation("Auto-responder rule {RuleId} '{RuleName}' fired on thread {ThreadId}",
-                rule.Id, rule.Name, threadId);
-            return rule.Id;
+            suggestions.Add(new ReplySuggestion(
+                rule.Id,
+                rule.Name,
+                body,
+                lastIncoming.Id,
+                lastIncoming.Text ?? ""));
         }
 
-        return null;
+        return suggestions;
     }
 
     /// <summary>Public matcher so the UI's "test match" endpoint can preview behavior.</summary>
@@ -106,7 +94,6 @@ public class MessengerRuleEngine
         if (string.IsNullOrEmpty(pattern)) return false;
         try
         {
-            // Cap runtime so a pathological pattern can't wedge the server.
             return Regex.IsMatch(text, pattern,
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
                 TimeSpan.FromMilliseconds(200));

@@ -16,10 +16,9 @@ import { ApiService } from '../../services/api.service';
 import { MessengerRule, MessengerRuleMatchType } from '../../models';
 
 /**
- * CRUD screen for auto-responder rules. Rules are evaluated in ascending
- * OrderIndex against the newest incoming message per thread whenever the
- * extension ingests new activity; the first match (subject to cooldown)
- * enqueues a reply into MessengerOutbox.
+ * CRUD screen for reply-suggestion rules. Rules are evaluated in ascending
+ * OrderIndex against the newest incoming message when a thread is opened.
+ * Matching replies are shown as copyable suggestions — nothing is sent.
  *
  * Placeholders supported in the response body:
  *   {counterparty}  buyer/seller display name
@@ -42,7 +41,7 @@ import { MessengerRule, MessengerRuleMatchType } from '../../models';
         <a mat-icon-button routerLink="/messages" matTooltip="Back to Messages">
           <mat-icon>arrow_back</mat-icon>
         </a>
-        <h1>Auto-responder rules</h1>
+        <h1>Reply suggestion rules</h1>
         <span class="spacer"></span>
         <button mat-flat-button color="primary" (click)="addNew()">
           <mat-icon>add</mat-icon> Add rule
@@ -50,9 +49,9 @@ import { MessengerRule, MessengerRuleMatchType } from '../../models';
       </div>
 
       <p class="hint">
-        Rules are evaluated top-to-bottom against the newest incoming message per thread.
-        The first match (that isn't in cooldown) enqueues a reply for the extension to send.
-        Placeholders: <code>&#123;counterparty&#125;</code>, <code>&#123;listing&#125;</code>,
+        Rules are evaluated top-to-bottom against the newest incoming message when you
+        open a thread. Each match is shown as a copyable suggestion — the extension
+        does not send replies. Placeholders: <code>&#123;counterparty&#125;</code>, <code>&#123;listing&#125;</code>,
         <code>&#123;build&#125;</code>, <code>&#123;price&#125;</code>, <code>&#123;text&#125;</code>.
       </p>
 
@@ -105,13 +104,8 @@ import { MessengerRule, MessengerRuleMatchType } from '../../models';
                              [(ngModel)]="r.matchText" (input)="dirty(r)" />
                     </mat-form-field>
                   }
-                  <mat-form-field appearance="outline" class="cooldown" subscriptSizing="dynamic"
-                                  matTooltip="Minutes to wait before this rule can fire again on the same thread.">
-                    <mat-label>Cooldown (min)</mat-label>
-                    <input matInput type="number" min="0" [(ngModel)]="r.cooldownMinutes" (input)="dirty(r)" />
-                  </mat-form-field>
                   <mat-checkbox [(ngModel)]="r.requireLinkedBuild" (change)="dirty(r)"
-                                matTooltip="Only fire when the thread is linked to a build.">
+                                matTooltip="Only suggest when the thread is linked to a build.">
                     Linked builds only
                   </mat-checkbox>
                 </div>

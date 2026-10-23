@@ -4,7 +4,7 @@ import { Observable } from 'rxjs';
 import { environment } from '../../environments/environment';
 import {
   BuildDetail, BuildNote, BuildSummary, BuildUnassignedPart, Computer, Lookups,
-  CheckOffTestOutcome, MessengerMessage, MessengerRule, MessengerThread,
+  CheckOffTestOutcome, MessengerMessage, MessengerReplySuggestion, MessengerRule, MessengerThread,
   MonthlySummaryReport, Part, PartImageMeta, PartPlaceholder, PartType, Payment,
   PublicComputer, Wage, ComputerShare
 } from '../models';
@@ -370,9 +370,9 @@ export class ApiService {
     return this.http.get<MessengerMessage[]>(`${this.api}/messenger/threads/${threadId}/messages`);
   }
 
-  queueMessengerReply(threadId: number, text: string): Observable<{ id: number; status: string }> {
-    return this.http.post<{ id: number; status: string }>(
-      `${this.api}/messenger/threads/${threadId}/reply`, { text });
+  getMessengerSuggestions(threadId: number): Observable<MessengerReplySuggestion[]> {
+    return this.http.get<MessengerReplySuggestion[]>(
+      `${this.api}/messenger/threads/${threadId}/suggestions`);
   }
 
   markMessengerRead(threadId: number) {
@@ -384,6 +384,10 @@ export class ApiService {
     return this.http.post(`${this.api}/messenger/threads/${threadId}/link`, computerId);
   }
 
+  deleteMessengerThread(threadId: number) {
+    return this.http.delete(`${this.api}/messenger/threads/${threadId}`);
+  }
+
   getMessengerUnreadCount(): Observable<{ count: number }> {
     return this.http.get<{ count: number }>(`${this.api}/messenger/unread-count`);
   }
@@ -393,7 +397,7 @@ export class ApiService {
     return `${this.api}/messenger/attachments/${attachmentId}`;
   }
 
-  // ----- Messenger auto-responder rules -----
+  // ----- Messenger suggestion rules -----
   getMessengerRules(): Observable<MessengerRule[]> {
     return this.http.get<MessengerRule[]>(`${this.api}/messenger/rules`);
   }

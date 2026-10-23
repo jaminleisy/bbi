@@ -253,6 +253,11 @@ BEGIN
 END
 ");
 
+        await db.Database.ExecuteSqlRawAsync(@"
+IF OBJECT_ID(N'dbo.MessengerMessages', N'U') IS NOT NULL AND COL_LENGTH('MessengerMessages', 'MediaUrl') IS NULL
+    ALTER TABLE dbo.MessengerMessages ADD MediaUrl nvarchar(1000) NULL;
+");
+
         // Message attachments (photos etc.)
         await db.Database.ExecuteSqlRawAsync(@"
 IF OBJECT_ID(N'dbo.MessengerAttachments', N'U') IS NULL

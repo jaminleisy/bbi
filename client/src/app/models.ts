@@ -329,8 +329,16 @@ export interface MessengerThread {
   lastMessageDate?: string | null;
   unread: boolean;
   lastMessage?: MessengerLastMessage | null;
-  /** How many replies are queued/in-flight for this thread. */
-  pendingReplies: number;
+  pendingReplies?: number;
+}
+
+/** Copyable reply produced when a thread is viewed. */
+export interface MessengerReplySuggestion {
+  ruleId: number;
+  ruleName: string;
+  text: string;
+  incomingMessageId: number;
+  incomingText: string;
 }
 
 /** Attachment metadata (bytes are streamed from the API on demand). */
@@ -339,6 +347,7 @@ export interface MessengerAttachmentMeta {
   contentType: string;
   width?: number | null;
   height?: number | null;
+  sourceUrl?: string | null;
 }
 
 /** A single message inside a thread transcript. */
@@ -348,6 +357,7 @@ export interface MessengerMessage {
   senderName?: string | null;
   text: string;
   timestamp: string;
+  mediaUrl?: string | null;
   attachments?: MessengerAttachmentMeta[];
 }
 

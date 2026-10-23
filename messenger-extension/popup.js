@@ -21,20 +21,26 @@ async function refresh() {
   $('conn').textContent = state.connected ? 'connected' : 'disconnected';
   $('conn').className = 'pill ' + (state.connected ? 'ok' : 'err');
   $('lastIngest').textContent = fmtTime(state.lastIngest);
-  $('lastPoll').textContent = fmtTime(state.lastPoll);
-  $('pending').textContent = state.lastOutboxCount ?? '—';
+  const err = $('error');
+  if (err) {
+    err.textContent = state.connected ? '' : (state.lastError || '');
+    err.style.display = state.connected || !state.lastError ? 'none' : '';
+  }
 
   const log = state.log || [];
   $('log').innerHTML = log.slice(-8).reverse()
     .map(l => `<div>${new Date(l.ts).toLocaleTimeString()} — ${l.msg}</div>`)
     .join('');
+  $('debug').textContent = state.lastDebug
+    ? JSON.stringify(state.lastDebug, null, 2)
+    : 'No scrape yet. Open a Messenger conversation and click Sync now.';
 }
 
 document.addEventListener('DOMContentLoaded', () => {
   refresh();
   $('sync').addEventListener('click', async () => {
     await chrome.runtime.sendMessage({ type: 'sync-now' });
-    setTimeout(refresh, 500);
+    setTimeout(refresh, 800);
   });
   $('options').addEventListener('click', () => chrome.runtime.openOptionsPage());
 });

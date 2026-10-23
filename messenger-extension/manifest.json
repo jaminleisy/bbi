@@ -1,13 +1,10 @@
 {
   "manifest_version": 3,
   "name": "BenBot Messenger Bridge",
-  "version": "0.1.0",
-  "description": "Bridges Facebook Messenger conversations (including Marketplace) to the BenBot Inventory API.",
+  "version": "0.2.12",
+  "description": "Copies Facebook Messenger conversations (including Marketplace) into the BenBot Inventory API. Does not send replies.",
   "permissions": [
-    "storage",
-    "alarms",
-    "scripting",
-    "notifications"
+    "storage"
   ],
   "host_permissions": [
     "https://www.messenger.com/*",
@@ -15,7 +12,9 @@
     "https://*.fbcdn.net/*",
     "https://*.cdninstagram.com/*",
     "http://localhost/*",
-    "https://localhost/*"
+    "https://localhost/*",
+    "http://benleisy-001-site3.etempurl.com/*",
+    "https://benleisy-001-site3.etempurl.com/*"
   ],
   "optional_host_permissions": [
     "http://*/*",
@@ -35,6 +34,17 @@
       "js": ["content.js"],
       "run_at": "document_idle",
       "all_frames": false
+    },
+    {
+      "matches": [
+        "https://www.messenger.com/*",
+        "https://www.facebook.com/messages/*",
+        "https://www.facebook.com/marketplace/inbox/*"
+      ],
+      "js": ["injected.js"],
+      "run_at": "document_idle",
+      "all_frames": false,
+      "world": "MAIN"
     }
   ],
   "action": {

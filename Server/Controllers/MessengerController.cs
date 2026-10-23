@@ -5,7 +5,6 @@ using BenBotInventory.Server.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -25,7 +24,8 @@ public record IngestPayload(
     string? ListingTitle,
     string? ListingUrl,
     bool? Unread,
-    List<IngestMessage>? Messages
+    List<IngestMessage>? Messages,
+    List<string>? VisibleMediaExternalIds
 );
 
 public record IngestMessage(
@@ -35,7 +35,8 @@ public record IngestMessage(
     string Text,
     DateTime Timestamp,
     string? RawJson,
-    List<IngestAttachment>? Attachments
+    List<IngestAttachment>? Attachments,
+    string? MediaUrl
 );
 
 /// <summary>
@@ -49,8 +50,6 @@ public record IngestAttachment(
     int? Width,
     int? Height
 );
-
-public record QueueReplyRequest(string Text);
 
 public record OutboxAckRequest(string Status, string? Error, string? ExternalId);
 
@@ -103,15 +102,24 @@ public class MessengerController : ControllerBase
         if (string.IsNullOrWhiteSpace(payload.FbThreadId))
             return BadRequest(new { message = "FbThreadId is required." });
 
+        var incoming = payload.Messages ?? new List<IngestMessage>();
+
         var thread = await _db.MessengerThreads
             .FirstOrDefaultAsync(t => t.FbThreadId == payload.FbThreadId);
+
+        var usableName = MessengerText.IsUsableName(payload.CounterpartyName)
+            ? payload.CounterpartyName!.Trim()
+            : null;
+
+        if (thread is null && incoming.Count == 0 && usableName is null)
+            return Ok(new { threadId = 0, fbThreadId = payload.FbThreadId, inserted = 0, skipped = "empty scrape" });
 
         if (thread is null)
         {
             thread = new MessengerThread
             {
                 FbThreadId = payload.FbThreadId,
-                CounterpartyName = payload.CounterpartyName,
+                CounterpartyName = usableName,
                 CounterpartyUrl = payload.CounterpartyUrl,
                 ListingTitle = payload.ListingTitle,
                 ListingUrl = payload.ListingUrl,
@@ -122,94 +130,150 @@ public class MessengerController : ControllerBase
         }
         else
         {
-            // Only fill blanks — don't clobber existing values with nulls the
-            // extension didn't capture on this pass.
-            if (!string.IsNullOrWhiteSpace(payload.CounterpartyName)) thread.CounterpartyName = payload.CounterpartyName;
+            // Don't clobber a real name with null, and never persist
+            // "Messenger | Facebook" / other tab-title junk.
+            if (usableName is not null) thread.CounterpartyName = usableName;
+            else if (!MessengerText.IsUsableName(thread.CounterpartyName))
+                thread.CounterpartyName = null;
             if (!string.IsNullOrWhiteSpace(payload.CounterpartyUrl))  thread.CounterpartyUrl  = payload.CounterpartyUrl;
             if (!string.IsNullOrWhiteSpace(payload.ListingTitle))     thread.ListingTitle     = payload.ListingTitle;
             if (!string.IsNullOrWhiteSpace(payload.ListingUrl))       thread.ListingUrl       = payload.ListingUrl;
             if (payload.Unread is not null)                            thread.Unread           = payload.Unread.Value;
         }
 
-        var incoming = payload.Messages ?? new List<IngestMessage>();
+        var existingRows = await _db.MessengerMessages
+            .Where(m => m.ThreadId == thread.Id)
+            .ToListAsync();
         var inserted = 0;
         var insertedIncoming = 0;
         foreach (var msg in incoming)
         {
+            var cleaned = MessengerText.CleanMessage(msg.Text, msg.Direction, msg.SenderName);
+            if (cleaned is null) continue;
+
+            var text = cleaned.Value.Text;
+            var direction = cleaned.Value.Outgoing ? "outgoing" : "incoming";
+            var senderName = cleaned.Value.Sender;
+            if (usableName is null && MessengerText.IsUsableName(senderName) && direction == "incoming")
+            {
+                usableName = senderName;
+                thread.CounterpartyName = senderName;
+            }
+
             var hasAttachments = (msg.Attachments?.Count ?? 0) > 0;
-            if (string.IsNullOrWhiteSpace(msg.Text)
+            if (string.IsNullOrWhiteSpace(text)
                 && string.IsNullOrWhiteSpace(msg.RawJson)
                 && !hasAttachments)
                 continue;
 
             var externalId = !string.IsNullOrWhiteSpace(msg.ExternalId)
                 ? msg.ExternalId!
-                : HashExternalId(payload.FbThreadId, msg.Timestamp, msg.SenderName, msg.Text);
+                : HashExternalId(payload.FbThreadId, msg.Timestamp, senderName, text);
 
-            var exists = await _db.MessengerMessages
-                .AnyAsync(m => m.ThreadId == thread.Id && m.ExternalId == externalId);
-            if (exists) continue;
+            var mediaUrl = SanitizeHttpUrl(msg.MediaUrl);
+
+            var match = existingRows.FirstOrDefault(m => m.ExternalId == externalId)
+                ?? existingRows.FirstOrDefault(m => m.Text == text && m.Direction == direction);
+            if (match is not null)
+            {
+                if (match.ExternalId != externalId)
+                    match.ExternalId = externalId;
+                if (match.Timestamp != msg.Timestamp)
+                    match.Timestamp = msg.Timestamp;
+                if (mediaUrl is not null)
+                    match.MediaUrl = mediaUrl;
+                if (hasAttachments && match.Id != 0
+                    && !await _db.MessengerAttachments.AnyAsync(a => a.MessageId == match.Id))
+                    AddAttachments(match.Id, msg.Attachments!);
+                continue;
+            }
 
             var record = new MessengerMessage
             {
                 ThreadId = thread.Id,
                 ExternalId = externalId,
-                Direction = msg.Direction == "outgoing" ? "outgoing" : "incoming",
-                SenderName = msg.SenderName,
-                Text = msg.Text ?? "",
+                Direction = direction,
+                SenderName = senderName,
+                Text = text,
                 Timestamp = msg.Timestamp,
-                RawJson = msg.RawJson
+                RawJson = msg.RawJson,
+                MediaUrl = mediaUrl
             };
             _db.MessengerMessages.Add(record);
+            existingRows.Add(record);
             await _db.SaveChangesAsync(); // need the Id for attachment FKs
             inserted++;
             if (record.Direction == "incoming") insertedIncoming++;
 
             if (hasAttachments)
-            {
-                foreach (var a in msg.Attachments!.Take(MaxAttachmentsPerMessage))
-                {
-                    var bytes = DecodeBase64(a.DataBase64);
-                    if (bytes is null || bytes.Length == 0 || bytes.Length > MaxAttachmentBytes)
-                        continue;
-
-                    _db.MessengerAttachments.Add(new MessengerAttachment
-                    {
-                        MessageId = record.Id,
-                        ContentType = string.IsNullOrWhiteSpace(a.ContentType) ? "image/jpeg" : a.ContentType,
-                        Data = bytes,
-                        SourceUrl = a.SourceUrl,
-                        Width = a.Width,
-                        Height = a.Height
-                    });
-                }
-            }
-
-            if (thread.LastMessageDate is null || msg.Timestamp > thread.LastMessageDate)
-                thread.LastMessageDate = msg.Timestamp;
+                AddAttachments(record.Id, msg.Attachments!);
         }
+
+        var dropping = new HashSet<MessengerMessage>();
+        if (payload.VisibleMediaExternalIds is not null)
+        {
+            var keep = payload.VisibleMediaExternalIds
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .ToHashSet(StringComparer.Ordinal);
+            foreach (var row in existingRows.Where(m =>
+                m.Id != 0 && MessengerText.IsMediaNote(m.Text) && !keep.Contains(m.ExternalId)))
+                dropping.Add(row);
+        }
+
+        foreach (var row in existingRows.Where(m => MessengerText.IsScrapedChrome(m.Text)))
+            dropping.Add(row);
+
+        if (dropping.Count > 0)
+            _db.MessengerMessages.RemoveRange(dropping);
 
         // Any incoming message flips the thread to unread; the UI clears it via /read.
         if (insertedIncoming > 0) thread.Unread = true;
 
         await _db.SaveChangesAsync();
 
-        // Fire auto-responder rules only when new incoming activity was seen.
-        int? firedRuleId = null;
-        if (insertedIncoming > 0)
-        {
-            try { firedRuleId = await _rules.ProcessThreadAsync(thread.Id); }
-            catch { /* rules are best-effort; don't fail ingest */ }
-        }
+        thread.LastMessageDate = await _db.MessengerMessages
+            .Where(m => m.ThreadId == thread.Id)
+            .Select(m => (DateTime?)m.Timestamp)
+            .MaxAsync();
+        await _db.SaveChangesAsync();
 
         return new
         {
             threadId = thread.Id,
             fbThreadId = thread.FbThreadId,
             inserted,
-            firedRuleId,
             totalMessages = await _db.MessengerMessages.CountAsync(m => m.ThreadId == thread.Id)
         };
+    }
+
+    private void AddAttachments(int messageId, List<IngestAttachment> attachments)
+    {
+        foreach (var a in attachments.Take(MaxAttachmentsPerMessage))
+        {
+            var bytes = DecodeBase64(a.DataBase64);
+            if (bytes is null || bytes.Length == 0 || bytes.Length > MaxAttachmentBytes)
+                continue;
+
+            _db.MessengerAttachments.Add(new MessengerAttachment
+            {
+                MessageId = messageId,
+                ContentType = string.IsNullOrWhiteSpace(a.ContentType) ? "image/jpeg" : a.ContentType,
+                Data = bytes,
+                SourceUrl = SanitizeHttpUrl(a.SourceUrl),
+                Width = a.Width,
+                Height = a.Height
+            });
+        }
+    }
+
+    private static string? SanitizeHttpUrl(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return null;
+        var t = url.Trim();
+        if (t.Length > 1000) t = t[..1000];
+        if (!Uri.TryCreate(t, UriKind.Absolute, out var u)) return null;
+        if (u.Scheme != Uri.UriSchemeHttp && u.Scheme != Uri.UriSchemeHttps) return null;
+        return t;
     }
 
     private static byte[]? DecodeBase64(string? s)
@@ -366,9 +430,10 @@ public class MessengerController : ControllerBase
                 m.SenderName,
                 m.Text,
                 m.Timestamp,
+                m.MediaUrl,
                 Attachments = _db.MessengerAttachments
                     .Where(a => a.MessageId == m.Id)
-                    .Select(a => new { a.Id, a.ContentType, a.Width, a.Height })
+                    .Select(a => new { a.Id, a.ContentType, a.Width, a.Height, a.SourceUrl })
                     .ToList()
             })
             .ToListAsync();
@@ -395,26 +460,16 @@ public class MessengerController : ControllerBase
         return new { count };
     }
 
-    /// <summary>Queue an outbound reply to be sent by the extension.</summary>
-    [HttpPost("threads/{id:int}/reply")]
+    /// <summary>
+    /// Copyable reply suggestions for the newest incoming message, produced
+    /// when the user opens the thread. The extension never sends these.
+    /// </summary>
+    [HttpGet("threads/{id:int}/suggestions")]
     [Authorize]
-    public async Task<ActionResult<object>> QueueReply(int id, QueueReplyRequest req)
+    public async Task<ActionResult<IEnumerable<ReplySuggestion>>> Suggestions(int id)
     {
-        if (string.IsNullOrWhiteSpace(req.Text))
-            return BadRequest(new { message = "Text is required." });
         if (!await _db.MessengerThreads.AnyAsync(t => t.Id == id)) return NotFound();
-
-        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-        var item = new MessengerOutbox
-        {
-            ThreadId = id,
-            Text = req.Text.Trim(),
-            Status = "pending",
-            QueuedByUserId = userId
-        };
-        _db.MessengerOutbox.Add(item);
-        await _db.SaveChangesAsync();
-        return new { item.Id, item.Status };
+        return Ok(await _rules.SuggestAsync(id));
     }
 
     /// <summary>Mark a thread read (typically after the UI shows it).</summary>
@@ -425,6 +480,18 @@ public class MessengerController : ControllerBase
         var t = await _db.MessengerThreads.FindAsync(id);
         if (t is null) return NotFound();
         t.Unread = false;
+        await _db.SaveChangesAsync();
+        return NoContent();
+    }
+
+    /// <summary>Delete a thread and its messages (use after a bad scrape).</summary>
+    [HttpDelete("threads/{id:int}")]
+    [Authorize]
+    public async Task<ActionResult> DeleteThread(int id)
+    {
+        var t = await _db.MessengerThreads.FindAsync(id);
+        if (t is null) return NotFound();
+        _db.MessengerThreads.Remove(t);
         await _db.SaveChangesAsync();
         return NoContent();
     }

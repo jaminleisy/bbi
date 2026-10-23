@@ -1,11 +1,6 @@
-// Settings page — reads/writes chrome.storage.sync and exercises /api/messenger/ping.
-
 const DEFAULTS = {
   apiBase: 'http://localhost:5000',
-  botToken: '',
-  pollSeconds: 15,
-  typeDelayMs: 40,
-  sendJitterMs: 800
+  botToken: ''
 };
 
 const $ = (id) => document.getElementById(id);
@@ -21,22 +16,14 @@ async function load() {
   const cfg = { ...DEFAULTS, ...(await chrome.storage.sync.get(DEFAULTS)) };
   $('apiBase').value = cfg.apiBase;
   $('botToken').value = cfg.botToken;
-  $('pollSeconds').value = cfg.pollSeconds;
-  $('typeDelayMs').value = cfg.typeDelayMs;
-  $('sendJitterMs').value = cfg.sendJitterMs;
 }
 
 async function save() {
   const cfg = {
     apiBase: $('apiBase').value.trim().replace(/\/+$/, ''),
-    botToken: $('botToken').value.trim(),
-    pollSeconds: Math.max(5, Number($('pollSeconds').value) || DEFAULTS.pollSeconds),
-    typeDelayMs: Math.max(0, Number($('typeDelayMs').value) || DEFAULTS.typeDelayMs),
-    sendJitterMs: Math.max(0, Number($('sendJitterMs').value) || DEFAULTS.sendJitterMs)
+    botToken: $('botToken').value.trim()
   };
   await chrome.storage.sync.set(cfg);
-  // Nudge the service worker to reschedule its poll alarm with the new interval.
-  try { await chrome.runtime.sendMessage({ type: 'config-updated' }); } catch { /* worker asleep */ }
   showStatus('Saved.', 'ok');
 }
 

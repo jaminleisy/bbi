@@ -16,15 +16,14 @@ import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { ApiService } from '../../services/api.service';
 import { AuthService } from '../../services/auth.service';
 import { MessengerNotificationsService } from '../../services/messenger-notifications.service';
-import { Computer, MessengerMessage, MessengerThread } from '../../models';
+import { Computer, MessengerMessage, MessengerReplySuggestion, MessengerThread } from '../../models';
 import { computerDisplayName } from '../../part-display';
 
 /**
  * Marketplace / Messenger inbox. Talks to /api/messenger/* and shows threads
- * scraped by the Chrome extension (see /messenger-extension). Composing a
- * reply posts to /api/messenger/threads/{id}/reply which enqueues the send
- * in MessengerOutbox; the extension picks it up on its next poll and drives
- * the messenger.com DOM.
+ * scraped by the Chrome extension (see /messenger-extension). Opening a
+ * thread loads copyable reply suggestions from matching rules. The
+ * extension never sends — paste the suggestion into Messenger yourself.
  */
 @Component({
   selector: 'app-messages',
@@ -39,9 +38,13 @@ import { computerDisplayName } from '../../part-display';
       <div class="header-row">
         <h1>Messages</h1>
         <span class="spacer"></span>
+        <mat-form-field appearance="outline" class="search-field" subscriptSizing="dynamic">
+          <mat-label>Search history</mat-label>
+          <input matInput [(ngModel)]="search" placeholder="Name, listing, or last message" />
+        </mat-form-field>
         <mat-slide-toggle [(ngModel)]="unreadOnly" (change)="loadThreads()">Unread only</mat-slide-toggle>
         @if (canManageRules) {
-          <a mat-button routerLink="/messages/rules" matTooltip="Auto-responder rules">
+          <a mat-button routerLink="/messages/rules" matTooltip="Reply suggestion rules">
             <mat-icon>auto_awesome</mat-icon>
             <span class="nav-label-inline">Rules</span>
           </a>
@@ -56,15 +59,18 @@ import { computerDisplayName } from '../../part-display';
         <aside class="thread-pane">
           @if (loading()) {
             <div class="center"><mat-spinner diameter="32"></mat-spinner></div>
-          } @else if (threads.length === 0) {
+          } @else if (visibleThreads.length === 0) {
             <div class="empty">
-              No threads yet. Open Facebook Messenger with the BenBot Messenger
-              Bridge extension installed, view a Marketplace conversation, then
-              refresh this page.
+              @if (threads.length === 0) {
+                No threads yet. Open Facebook Messenger with the BenBot Messenger
+                Bridge extension installed, view a conversation, then refresh this page.
+              } @else {
+                No threads match “{{ search }}”.
+              }
             </div>
           } @else {
             <ul class="thread-list">
-              @for (t of threads; track t.id) {
+              @for (t of visibleThreads; track t.id) {
                 <li class="thread-row"
                     [class.selected]="t.id === selectedThread?.id"
                     [class.unread]="t.unread"
@@ -92,11 +98,6 @@ import { computerDisplayName } from '../../part-display';
                   </div>
                   <div class="row-badges">
                     @if (t.unread) { <span class="pill unread">new</span> }
-                    @if (t.pendingReplies > 0) {
-                      <span class="pill pending" matTooltip="Replies queued for the extension to send">
-                        {{ t.pendingReplies }} queued
-                      </span>
-                    }
                     @if (t.computerId) {
                       <span class="pill linked" [matTooltip]="computerName(t.computerId) ?? ''">
                         <mat-icon>link</mat-icon> {{ computerName(t.computerId) ?? '#' + t.computerId }}
@@ -150,6 +151,11 @@ import { computerDisplayName } from '../../part-display';
                  target="_blank" rel="noopener">
                 <mat-icon>open_in_new</mat-icon>
               </a>
+              <button mat-icon-button
+                      matTooltip="Delete this thread (re-open it in Messenger to scrape again)"
+                      (click)="deleteThread()">
+                <mat-icon>delete_outline</mat-icon>
+              </button>
             </header>
 
             <div class="transcript" #transcript>
@@ -162,7 +168,7 @@ import { computerDisplayName } from '../../part-display';
                   <div class="bubble" [class.incoming]="m.direction === 'incoming'"
                                       [class.outgoing]="m.direction === 'outgoing'">
                     @if (m.text) {
-                      <div class="bubble-text">{{ m.text }}</div>
+                      <div class="bubble-text" [class.media-note]="isMediaNote(m.text)">{{ m.text }}</div>
                     }
                     @if ((m.attachments?.length ?? 0) > 0) {
                       <div class="bubble-attachments">
@@ -175,6 +181,11 @@ import { computerDisplayName } from '../../part-display';
                         }
                       </div>
                     }
+                    @if (mediaHref(m); as href) {
+                      <a class="media-link" [href]="href" target="_blank" rel="noopener noreferrer">
+                        {{ mediaLinkLabel(m) }}
+                      </a>
+                    }
                     <div class="bubble-meta">
                       {{ m.timestamp | date:'shortDate' }} · {{ m.timestamp | date:'shortTime' }}
                     </div>
@@ -183,31 +194,45 @@ import { computerDisplayName } from '../../part-display';
               }
             </div>
 
-            <footer class="composer">
-              <mat-form-field appearance="outline" class="reply-field" subscriptSizing="dynamic">
-                <mat-label>Reply</mat-label>
-                <textarea matInput rows="3"
-                          [(ngModel)]="replyText"
-                          (keydown)="onReplyKeydown($event)"
-                          [disabled]="sending()"
-                          placeholder="Type a reply — Ctrl+Enter to queue for send"></textarea>
-              </mat-form-field>
-              <div class="composer-actions">
-                <span class="composer-hint">
-                  Replies are queued and sent by the extension when a Messenger tab is open.
-                </span>
-                <span class="spacer"></span>
-                <button mat-flat-button color="primary"
-                        [disabled]="!replyText.trim() || sending()"
-                        (click)="sendReply()">
-                  @if (sending()) {
-                    <mat-spinner diameter="18"></mat-spinner>
-                  } @else {
-                    <mat-icon>send</mat-icon>
+            <footer class="suggestions">
+              @if (suggestionsLoading()) {
+                <div class="suggestion-hint">Looking for a reply suggestion…</div>
+              } @else if (suggestions.length > 0) {
+                <div class="suggestions-label">
+                  Reply suggestion
+                  <span class="suggestion-hint">Copy and paste into Messenger</span>
+                </div>
+                @for (s of suggestions; track s.ruleId) {
+                  <div class="suggestion-card">
+                    <div class="suggestion-meta">
+                      <span class="suggestion-rule">{{ s.ruleName }}</span>
+                      <span class="suggestion-for" [matTooltip]="s.incomingText">
+                        for “{{ previewText(s.incomingText) }}”
+                      </span>
+                    </div>
+                    <div class="suggestion-text">{{ s.text }}</div>
+                    <div class="suggestion-actions">
+                      <button mat-flat-button color="primary" (click)="copySuggestion(s)">
+                        <mat-icon>content_copy</mat-icon>
+                        Copy
+                      </button>
+                      <a mat-stroked-button
+                         [href]="'https://www.messenger.com/t/' + selectedThread.fbThreadId"
+                         target="_blank" rel="noopener">
+                        <mat-icon>open_in_new</mat-icon>
+                        Open Messenger
+                      </a>
+                    </div>
+                  </div>
+                }
+              } @else if (newestIsIncoming) {
+                <div class="suggestion-hint">
+                  No matching suggestion for the latest incoming message.
+                  @if (canManageRules) {
+                    <a routerLink="/messages/rules">Add a rule</a>
                   }
-                  Queue reply
-                </button>
-              </div>
+                </div>
+              }
             </footer>
           }
         </section>
@@ -219,6 +244,7 @@ import { computerDisplayName } from '../../part-display';
     .header-row { display: flex; align-items: center; gap: 12px; padding: 12px 16px 8px; flex-wrap: wrap; }
     .header-row h1 { margin: 0; font-size: 20px; }
     .spacer { flex: 1; }
+    .search-field { width: 260px; }
 
     .two-pane {
       display: grid;
@@ -318,7 +344,6 @@ import { computerDisplayName } from '../../part-display';
       color: #555;
     }
     .pill.unread { background: #ffca28; color: #4a3400; }
-    .pill.pending { background: #b39ddb; color: #311b92; }
     .pill.linked { background: #c8e6c9; color: #1b5e20; }
     .pill mat-icon {
       font-size: 12px;
@@ -393,6 +418,16 @@ import { computerDisplayName } from '../../part-display';
     }
     .bubble.incoming { align-self: flex-start; background: #fff; border: 1px solid #e0e0e0; border-bottom-left-radius: 4px; }
     .bubble.outgoing { align-self: flex-end; background: #1976d2; color: #fff; border-bottom-right-radius: 4px; }
+    .bubble-text.media-note { font-style: italic; opacity: 0.88; }
+    .media-link {
+      display: inline-block;
+      margin-top: 4px;
+      font-size: 12px;
+      font-weight: 600;
+      text-decoration: underline;
+      color: #1565c0;
+    }
+    .bubble.outgoing .media-link { color: #fff; }
     .bubble.outgoing .bubble-meta { color: rgba(255,255,255,0.8); }
     .bubble-meta { font-size: 11px; color: #888; margin-top: 3px; text-align: right; }
     .bubble-attachments {
@@ -411,17 +446,44 @@ import { computerDisplayName } from '../../part-display';
     }
     .nav-label-inline { margin-left: 4px; }
 
-    .composer {
+    .suggestions {
       border-top: 1px solid #eee;
       padding: 10px 12px;
       display: flex;
       flex-direction: column;
-      gap: 6px;
+      gap: 8px;
       background: #fff;
     }
-    .reply-field { width: 100%; }
-    .composer-actions { display: flex; align-items: center; gap: 8px; }
-    .composer-hint { color: #888; font-size: 12px; }
+    .suggestions-label {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      font-weight: 600;
+      font-size: 13px;
+    }
+    .suggestion-card {
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      padding: 10px 12px;
+      background: #f7fbff;
+    }
+    .suggestion-meta {
+      display: flex;
+      gap: 8px;
+      align-items: baseline;
+      flex-wrap: wrap;
+      margin-bottom: 6px;
+    }
+    .suggestion-rule { font-weight: 600; font-size: 12px; color: #1565c0; }
+    .suggestion-for { font-size: 12px; color: #888; }
+    .suggestion-text {
+      font-size: 14px;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      margin-bottom: 10px;
+    }
+    .suggestion-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .suggestion-hint { color: #888; font-size: 12px; }
 
     .center { display: flex; justify-content: center; padding: 32px; }
     .empty { text-align: center; padding: 32px 16px; color: #888; font-size: 13px; }
@@ -433,12 +495,13 @@ export class MessagesComponent implements OnInit, OnDestroy, AfterViewChecked {
   computers: Computer[] = [];
   selectedThread: MessengerThread | null = null;
   messages: MessengerMessage[] = [];
+  suggestions: MessengerReplySuggestion[] = [];
 
   loading = signal(true);
   messagesLoading = signal(false);
-  sending = signal(false);
+  suggestionsLoading = signal(false);
   unreadOnly = false;
-  replyText = '';
+  search = '';
 
   private threadPollTimer: ReturnType<typeof setInterval> | null = null;
   private msgPollTimer: ReturnType<typeof setInterval> | null = null;
@@ -458,6 +521,24 @@ export class MessagesComponent implements OnInit, OnDestroy, AfterViewChecked {
 
   get canManageRules(): boolean {
     return this.auth.permissionLevel() >= 3;
+  }
+
+  get newestIsIncoming(): boolean {
+    const last = this.messages.at(-1);
+    return last?.direction === 'incoming';
+  }
+
+  get visibleThreads(): MessengerThread[] {
+    const q = this.search.trim().toLowerCase();
+    if (!q) return this.threads;
+    return this.threads.filter(t => {
+      const hay = [
+        t.counterpartyName,
+        t.listingTitle,
+        t.lastMessage?.text
+      ].filter(Boolean).join(' ').toLowerCase();
+      return hay.includes(q);
+    });
   }
 
   attachmentUrl(id: number): string {
@@ -521,8 +602,27 @@ export class MessagesComponent implements OnInit, OnDestroy, AfterViewChecked {
       next: (msgs) => {
         this.messages = msgs ?? [];
         this.messagesLoading.set(false);
+        this.loadSuggestions();
       },
       error: () => this.messagesLoading.set(false)
+    });
+  }
+
+  loadSuggestions(): void {
+    if (!this.selectedThread) {
+      this.suggestions = [];
+      return;
+    }
+    this.suggestionsLoading.set(true);
+    this.api.getMessengerSuggestions(this.selectedThread.id).subscribe({
+      next: (list) => {
+        this.suggestions = list ?? [];
+        this.suggestionsLoading.set(false);
+      },
+      error: () => {
+        this.suggestions = [];
+        this.suggestionsLoading.set(false);
+      }
     });
   }
 
@@ -530,6 +630,7 @@ export class MessagesComponent implements OnInit, OnDestroy, AfterViewChecked {
     if (this.selectedThread?.id === t.id) return;
     this.selectedThread = t;
     this.messages = [];
+    this.suggestions = [];
     this.lastMessageCount = 0;
     this.loadMessages(true);
     // Fire-and-forget mark-as-read.
@@ -549,30 +650,64 @@ export class MessagesComponent implements OnInit, OnDestroy, AfterViewChecked {
     });
   }
 
-  sendReply(): void {
-    const text = this.replyText.trim();
-    if (!text || !this.selectedThread) return;
-    this.sending.set(true);
-    this.api.queueMessengerReply(this.selectedThread.id, text).subscribe({
-      next: () => {
-        this.replyText = '';
-        this.sending.set(false);
-        this.snack.open('Reply queued — the extension will send it on its next poll.', undefined, { duration: 3500 });
-        this.loadThreads();
-      },
-      error: (err) => {
-        this.sending.set(false);
-        this.snack.open('Failed to queue reply: ' + (err?.error?.message || err?.message || 'unknown'), 'Dismiss');
-      }
-    });
+  isMediaNote(text: string | null | undefined): boolean {
+    return /^\s*\[\d*\s*(Photos?|Videos?|GIFs?)\]\s*$/i.test(text ?? '');
   }
 
-  onReplyKeydown(ev: KeyboardEvent): void {
-    // Ctrl+Enter or Cmd+Enter queues without needing to move the mouse.
-    if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) {
-      ev.preventDefault();
-      this.sendReply();
+  mediaHref(m: MessengerMessage): string | null {
+    const remote = (m.mediaUrl || '').trim();
+    if (/^https?:\/\//i.test(remote)) return remote;
+    const att = m.attachments?.[0];
+    if (att?.sourceUrl && /^https?:\/\//i.test(att.sourceUrl)) return att.sourceUrl;
+    if (att) return this.attachmentUrl(att.id);
+    return null;
+  }
+
+  mediaLinkLabel(m: MessengerMessage): string {
+    const remote = (m.mediaUrl || m.attachments?.[0]?.sourceUrl || '').trim();
+    const kind = (m.text || '').replace(/[\[\]]/g, '').trim() || 'photo';
+    if (/^https?:\/\//i.test(remote)) return `Open ${kind.toLowerCase()} on Facebook`;
+    return `Open ${kind.toLowerCase()}`;
+  }
+
+  previewText(text: string | null | undefined, max = 48): string {
+    const t = (text ?? '').replace(/\s+/g, ' ').trim();
+    if (t.length <= max) return t;
+    return t.slice(0, max - 1) + '…';
+  }
+
+  copySuggestion(s: MessengerReplySuggestion): void {
+    const text = s.text ?? '';
+    if (!text) return;
+    navigator.clipboard.writeText(text).then(
+      () => this.snack.open('Copied. Paste it into the Messenger conversation.', undefined, { duration: 3000 }),
+      () => this.snack.open('Could not copy — select the text and copy manually.', 'Dismiss')
+    );
+  }
+
+  deleteThread(): void {
+    if (!this.selectedThread) return;
+    const t = this.selectedThread;
+    if (!confirm(`Delete the conversation with ${t.counterpartyName || 'this person'}? You can scrape it again by opening it in Messenger.`)) {
+      return;
     }
+    this.api.deleteMessengerThread(t.id).subscribe({
+      next: () => {
+        this.threads = this.threads.filter(x => x.id !== t.id);
+        this.selectedThread = null;
+        this.messages = [];
+        this.notifications.refresh();
+        this.router.navigate([], {
+          relativeTo: this.route,
+          queryParams: { thread: null },
+          queryParamsHandling: 'merge',
+          replaceUrl: true
+        });
+        this.snack.open('Thread deleted.', undefined, { duration: 2500 });
+      },
+      error: (err) => this.snack.open(
+        'Delete failed: ' + (err?.error?.message || err?.message || 'unknown'), 'Dismiss')
+    });
   }
 
   onLinkComputer(computerId: number | null): void {
@@ -587,6 +722,7 @@ export class MessagesComponent implements OnInit, OnDestroy, AfterViewChecked {
         const row = this.threads.find(t => t.id === threadId);
         if (row) row.computerId = computerId ?? null;
         this.snack.open(computerId ? 'Linked to build.' : 'Unlinked.', undefined, { duration: 2000 });
+        this.loadSuggestions();
       },
       error: (err) => this.snack.open(
         'Link failed: ' + (err?.error?.message || err?.message || 'unknown'), 'Dismiss')

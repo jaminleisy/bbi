@@ -1,13 +1,13 @@
 # BenBot Messenger Bridge (Chrome MV3 extension)
 
-Bridges Facebook Messenger (including Marketplace threads) to the BenBot
-Inventory API at `/api/messenger/*`. The extension scrapes incoming messages
-from an open `messenger.com` tab and posts them to the server; the server
-queues outbound replies which the extension sends by driving the compose box.
+Copies Facebook Messenger conversations (including Marketplace threads) into
+the BenBot Inventory API at `/api/messenger/*`. The extension only scrapes
+an open `messenger.com` tab and posts history to the server. It does **not**
+type or send replies. Open a thread in BenBot to get copyable suggestions.
 
-> **Terms of Service warning.** Automating messenger.com violates Meta's ToS.
-> Use a dedicated Facebook account, keep volume comparable to a real seller,
-> and expect to lose the account eventually. This is a personal-use tool.
+> **Terms of Service warning.** Scraping messenger.com still violates Meta's
+> ToS. Use a dedicated Facebook account and keep usage comparable to a real
+> seller. This is a personal-use tool.
 
 ## 1. Server-side setup
 
@@ -40,41 +40,15 @@ queues outbound replies which the extension sends by driving the compose box.
    **Settings**. Fill in:
    - **API base URL** — e.g. `http://localhost:5000`
    - **Bot token** — the exact value from `appsettings.json`
-   - **Poll interval / typing delays** — defaults are fine to start.
 5. Click **Test connection**. You should get `OK — server time: …`.
 
 ## 3. Use it
 
 1. Open `https://www.messenger.com/` in the same Chrome profile and log in.
-2. Open any Marketplace conversation. Within a second or two the popup's
-   **Last ingest** should tick — that means the content script scraped the
-   thread and pushed the messages to the server.
-3. Queue a reply against the server:
-
-   ```
-   POST /api/messenger/threads/{id}/reply
-     Authorization: Bearer <your JWT>
-     Content-Type: application/json
-     { "text": "Yes, still available!" }
-   ```
-
-   Or from PowerShell after logging in:
-
-   ```powershell
-   $t = (Invoke-RestMethod http://localhost:5000/api/auth/login `
-          -Method Post -ContentType application/json `
-          -Body '{"userId":"admin","password":"admin"}').token
-   Invoke-RestMethod http://localhost:5000/api/messenger/threads/1/reply `
-     -Method Post -ContentType application/json `
-     -Headers @{ Authorization = "Bearer $t" } `
-     -Body '{"text":"Yes, still available!"}'
-   ```
-
-4. Within the poll interval (default 15s) the extension will pick the reply
-   up, navigate the Messenger tab to that thread if needed, type the text
-   with human-like jitter, and press Enter. On success the server logs the
-   outgoing message into `MessengerMessages` so the transcript stays
-   complete.
+2. Open a conversation. Within a second or two the popup's **Last ingest**
+   should tick — the thread is now in BenBot **Messages**.
+3. In BenBot, open the thread. Matching rules show a **Copy** suggestion.
+   Paste it into Messenger yourself. The extension never sends.
 
 ## 4. API surface
 
@@ -85,11 +59,9 @@ require a normal JWT (same as your other controllers).
 |--------|---------------------------------------------|------------|--------------------------------------|
 | GET    | `/api/messenger/ping`                       | Bot token  | Health check                         |
 | POST   | `/api/messenger/ingest`                     | Bot token  | Upsert thread + append messages      |
-| GET    | `/api/messenger/outbox?limit=N`             | Bot token  | Claim pending replies (up to 25)     |
-| POST   | `/api/messenger/outbox/{id}/ack`            | Bot token  | Report result (`sent`/`retry`/`failed`) |
 | GET    | `/api/messenger/threads`                    | JWT        | List threads, newest first           |
 | GET    | `/api/messenger/threads/{id}/messages`      | JWT        | Transcript for one thread            |
-| POST   | `/api/messenger/threads/{id}/reply`         | JWT        | Queue an outbound reply              |
+| GET    | `/api/messenger/threads/{id}/suggestions`   | JWT        | Copyable reply suggestions           |
 | POST   | `/api/messenger/threads/{id}/read`          | JWT        | Mark thread read                     |
 | POST   | `/api/messenger/threads/{id}/link`          | JWT        | Link thread to a `Computer` build    |
 
@@ -112,9 +84,12 @@ const SELECTORS = {
 
 Debug workflow when something stops working:
 
-1. Open a Marketplace thread on `messenger.com`.
-2. Open DevTools → Console and run `__benbot_debug()` — this returns the
-   last snapshot the observer produced. Look at what's `null` or empty.
+1. Open a Marketplace thread on `messenger.com` and refresh the tab after
+   reloading the extension.
+2. Click the extension icon and look at the debug JSON (`media.imgTotal`,
+   `media.kept`). Or in DevTools → Console run `__benbot_debug()` after
+   refreshing the tab (the hook is injected in the page world). Look at
+   what's `null` or empty.
 3. In DevTools → Elements, inspect the corresponding DOM chunk and pick
    a stable-looking selector (prefer `role`, `aria-label`, and `dir="auto"`
    over CSS classes — FB hashes classes and rotates them).
