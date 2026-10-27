@@ -208,7 +208,7 @@ public class Computer
     [MaxLength(20)]
     public string Type { get; set; } = "PC";
 
-    /// <summary>Planned, In-progress, Built, Active, Sold, Returned, Needs repair, Traded, Personal</summary>
+    /// <summary>Planned, In-progress, Built, Active, Sold, Sold eBay, Returned, Needs repair, Traded, Personal</summary>
     [MaxLength(30)]
     public string Status { get; set; } = "Planned";
 

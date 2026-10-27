@@ -11,7 +11,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { animate, state, style, transition, trigger } from '@angular/animations';
 import { ApiService } from '../../services/api.service';
-import { MonthlySummaryReport, MonthlySummaryRow } from '../../models';
+import { MonthlySaleLine, MonthlySummaryReport, MonthlySummaryRow } from '../../models';
 
 @Component({
   selector: 'app-summary',
@@ -50,6 +50,8 @@ import { MonthlySummaryReport, MonthlySummaryRow } from '../../models';
         Profit is pretax revenue minus parts cost minus payment fees minus wages
         ({{ wagesBySaleDate ? 'by computer sale date' : 'by paid date' }}).
         Sales with no tax are counted as exempt.
+        eBay sales are listed separately because eBay remits the tax; they are not
+        included in Total Sales, tax due, or any other column.
       </p>
 
       @if (loading) {
@@ -67,6 +69,9 @@ import { MonthlySummaryReport, MonthlySummaryRow } from '../../models';
               @if (m.soldCount) {
                 <span class="count-badge">{{ m.soldCount }} sale{{ m.soldCount === 1 ? '' : 's' }}</span>
               }
+              @if (m.ebaySales) {
+                <span class="count-badge ebay-badge">eBay</span>
+              }
             </td>
             <td mat-footer-cell *matFooterCellDef><strong>Year total</strong></td>
           </ng-container>
@@ -75,6 +80,15 @@ import { MonthlySummaryReport, MonthlySummaryRow } from '../../models';
             <th mat-header-cell *matHeaderCellDef>Total Sales</th>
             <td mat-cell *matCellDef="let m">{{ m.totalSales | currency }}</td>
             <td mat-footer-cell *matFooterCellDef><strong>{{ report.yearTotals.totalSales | currency }}</strong></td>
+          </ng-container>
+
+          <ng-container matColumnDef="ebaySales">
+            <th mat-header-cell *matHeaderCellDef>
+              eBay Sales
+              <mat-icon class="hint-icon" matTooltip="Sold on eBay. Tax is remitted by eBay and is not included in Total Sales or Tax Due.">info</mat-icon>
+            </th>
+            <td mat-cell *matCellDef="let m">{{ m.ebaySales | currency }}</td>
+            <td mat-footer-cell *matFooterCellDef><strong>{{ report.yearTotals.ebaySales | currency }}</strong></td>
           </ng-container>
 
           <ng-container matColumnDef="exemptSales">
@@ -149,16 +163,26 @@ import { MonthlySummaryReport, MonthlySummaryRow } from '../../models';
                         <th>Before Tax</th>
                         <th>Parts</th>
                         <th>Wages</th>
+                        <th>Josh Share</th>
                         <th>Profit</th>
                       </tr>
                       @for (s of m.sales; track s.id) {
-                        <tr>
+                        <tr [class.ebay-row]="s.isEbay"
+                            [class.josh-unpaid-row]="hasUnpaidJoshShare(s)">
                           <td>{{ s.soldDate | date:'M/d/yyyy' }}</td>
-                          <td>{{ s.name }}</td>
+                          <td>
+                            @if (hasUnpaidJoshShare(s)) {
+                              <mat-icon class="josh-share-warn"
+                                        [matTooltip]="unpaidJoshShareTooltip">warning</mat-icon>
+                            }
+                            {{ s.name }}
+                          </td>
                           <td>{{ s.customerName || '—' }}</td>
                           <td>{{ s.price | currency }}</td>
                           <td>
-                            @if (s.isExempt) {
+                            @if (s.isEbay) {
+                              <span class="ebay-tag">eBay</span>
+                            } @else if (s.isExempt) {
                               <span class="exempt-tag">exempt</span>
                             } @else {
                               {{ s.tax | currency }}
@@ -175,6 +199,25 @@ import { MonthlySummaryReport, MonthlySummaryRow } from '../../models';
                                 }
                               </div>
                             } @else {
+                              —
+                            }
+                          </td>
+                          <td>
+                            @if (s.joshSharePercentage != null) {
+                              {{ s.joshSharePercentage }}%
+                            }
+                            @if (s.joshSharePercentage != null && (s.wagesJosh || s.joshShareAmount != null)) {
+                              <span class="josh-sep">/</span>
+                            }
+                            @if (s.wagesJosh) {
+                              {{ s.wagesJosh | currency }}
+                            } @else if (s.joshSharePercentage != null && s.joshShareAmount != null) {
+                              <span class="josh-share-est"
+                                    matTooltip="Estimated share — Josh has not been paid wages yet">
+                                {{ s.joshShareAmount | currency }}
+                              </span>
+                            }
+                            @if (s.joshSharePercentage == null && !s.wagesJosh) {
                               —
                             }
                           </td>
@@ -197,7 +240,7 @@ import { MonthlySummaryReport, MonthlySummaryRow } from '../../models';
           <tr mat-header-row *matHeaderRowDef="displayedColumns"></tr>
           <tr mat-row *matRowDef="let m; columns: displayedColumns"
               class="month-row"
-              [class.empty-row]="!m.soldCount"
+              [class.empty-row]="!m.soldCount && !m.ebaySales"
               [class.expanded-row]="expanded === m"
               (click)="toggle(m)"></tr>
           <tr mat-row *matRowDef="let m; columns: ['expandedDetail']" class="detail-row"></tr>
@@ -253,6 +296,34 @@ import { MonthlySummaryReport, MonthlySummaryRow } from '../../models';
       border-radius: 8px;
       padding: 1px 6px;
     }
+    .ebay-tag, .count-badge.ebay-badge {
+      font-size: 11px;
+      background: #e3f2fd;
+      color: #0d47a1;
+      border-radius: 8px;
+      padding: 1px 6px;
+    }
+    .count-badge.ebay-badge {
+      border-radius: 10px;
+      padding: 1px 8px;
+    }
+    .ebay-row td { color: #546e7a; }
+    .josh-unpaid-row td { background: #ffebee; }
+    .josh-share-warn {
+      font-size: 18px;
+      width: 18px;
+      height: 18px;
+      vertical-align: middle;
+      color: #d32f2f;
+      margin-right: 4px;
+      cursor: help;
+    }
+    .josh-sep { color: #999; margin: 0 4px; }
+    .josh-share-est {
+      color: #bdbdbd;
+      font-style: italic;
+      cursor: help;
+    }
     .wage-list { line-height: 1.35; }
     .wage-builder { color: #777; font-size: 11px; }
     tr.mat-mdc-footer-row td { border-top: 2px solid #ccc; background: #f5f5f5; }
@@ -267,7 +338,13 @@ export class SummaryComponent implements OnInit {
   report: MonthlySummaryReport | null = null;
   displayRows: MonthlySummaryRow[] = [];
   expanded: MonthlySummaryRow | null = null;
-  displayedColumns = ['month', 'totalSales', 'exemptSales', 'totalBeforeTax', 'taxDue', 'partsCost', 'wages', 'profit'];
+  displayedColumns = ['month', 'totalSales', 'ebaySales', 'exemptSales', 'totalBeforeTax', 'taxDue', 'partsCost', 'wages', 'profit'];
+  readonly unpaidJoshShareTooltip =
+    'Josh has a share percentage set on this PC, but no wages have been recorded for him yet. The share amount shown is only an estimate.';
+
+  hasUnpaidJoshShare(s: MonthlySaleLine): boolean {
+    return (s.joshSharePercentage ?? 0) > 0 && !s.wagesJosh;
+  }
 
   constructor(private api: ApiService) {}
 

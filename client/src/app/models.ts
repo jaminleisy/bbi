@@ -135,6 +135,8 @@ export interface Computer {
   wagesNonJosh?: number;
   /** Josh's total share percentage; null when he has no share. */
   joshSharePercentage?: number | null;
+  /** Suggested Josh payout = shareBase × joshSharePercentage / 100. */
+  joshShareAmount?: number | null;
   /** Profit − all wages + wages paid to Ben L. */
   benProfit?: number;
   isShipping?: boolean;
@@ -246,9 +248,19 @@ export interface BuildUnassignedPart {
   computerName?: string | null;
 }
 
-export const STATUSES = ['Planned', 'In-progress', 'Built', 'Active', 'Sold', 'Returned', 'Needs repair', 'Traded', 'Personal'];
+export const STATUSES = ['Planned', 'In-progress', 'Built', 'Active', 'Sold', 'Sold eBay', 'Returned', 'Needs repair', 'Traded', 'Personal'];
 export const PAYMENT_TYPES = ['payment', 'deposit', 'refund'];
-export const PAYMENT_METHODS = ['cash', 'PayPal', 'Venmo', 'Zelle', 'CashApp', 'check', 'other'];
+export const PAYMENT_METHODS = ['cash', 'PayPal', 'Venmo', 'Zelle', 'CashApp', 'check', 'eBay', 'other'];
+
+/** Sold through any channel (regular or eBay). */
+export function isSoldStatus(status?: string | null): boolean {
+  return status === 'Sold' || status === 'Sold eBay';
+}
+
+/** Marketplace sale — eBay remits sales tax, so it is excluded from tax totals. */
+export function isEbaySold(status?: string | null): boolean {
+  return status === 'Sold eBay';
+}
 
 export interface MonthlySaleWage {
   id: number;
@@ -267,11 +279,17 @@ export interface MonthlySaleLine {
   price: number;
   tax: number;
   isExempt: boolean;
+  isEbay: boolean;
   beforeTax: number;
   partsCost: number;
   paymentFees?: number;
   wagesTotal: number;
   wages: MonthlySaleWage[];
+  wagesJosh?: number;
+  /** Josh's total share percentage; null when he has no share. */
+  joshSharePercentage?: number | null;
+  /** Suggested Josh payout = shareBase × joshSharePercentage / 100. */
+  joshShareAmount?: number | null;
   profit: number;
 }
 
@@ -280,6 +298,7 @@ export interface MonthlySummaryRow {
   monthName: string;
   soldCount: number;
   totalSales: number;
+  ebaySales: number;
   exemptSales: number;
   totalBeforeTax: number;
   taxDue: number;
@@ -292,6 +311,7 @@ export interface MonthlySummaryRow {
 export interface MonthlySummaryTotals {
   soldCount: number;
   totalSales: number;
+  ebaySales: number;
   exemptSales: number;
   totalBeforeTax: number;
   taxDue: number;

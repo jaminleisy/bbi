@@ -751,7 +751,7 @@ export class MessagesComponent implements OnInit, OnDestroy, AfterViewChecked {
     this.api.getComputers().subscribe({
       next: (list) => {
         // Show "linkable" builds first: exclude Sold / Traded / Returned.
-        const excluded = new Set(['Sold', 'Traded', 'Returned']);
+        const excluded = new Set(['Sold', 'Sold eBay', 'Traded', 'Returned']);
         this.computers = (list ?? [])
           .filter(c => !excluded.has(c.status))
           .sort((a, b) => computerDisplayName(a).localeCompare(computerDisplayName(b), undefined, { sensitivity: 'base' }));

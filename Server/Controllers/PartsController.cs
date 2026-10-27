@@ -20,6 +20,12 @@ public record CheckOffTestRequest(string Outcome, string? Notes);
 /// <summary>Split one part row into <see cref="Quantity"/> identical unit rows.</summary>
 public record SplitPartRequest(int Quantity, string? ModelNumber);
 
+/// <summary>One component created when splitting a prebuilt PC.</summary>
+public record SplitPcPartDto(string Type, string? Manufacturer, string? ModelNumber, decimal Cost, string? Color);
+
+/// <summary>Replace one part with individually entered components whose costs sum to the original.</summary>
+public record SplitPcRequest(List<SplitPcPartDto> Parts);
+
 /// <summary>One reviewed draft to create; optional listing image from PDF parse.</summary>
 public class ImportParsedPartDto
 {
@@ -125,7 +131,7 @@ public class PartsController : ControllerBase
         }
         // When listing assigned parts, optionally hide those on Sold computers.
         if (excludeSold == true)
-            query = query.Where(p => p.ComputerId == null || p.Computer!.Status != "Sold");
+            query = query.Where(p => p.ComputerId == null || !ComputerStatus.SoldStatuses.Contains(p.Computer!.Status));
         // Check-off lists: skip parts on Built / Active / Sold builds.
         if (notReceived == true || needsTesting == true || needsTransfer == true)
         {
@@ -134,7 +140,7 @@ public class PartsController : ControllerBase
                 || p.Computer == null
                 || (p.Computer.Status != "Built"
                     && p.Computer.Status != "Active"
-                    && p.Computer.Status != "Sold"));
+                    && !ComputerStatus.SoldStatuses.Contains(p.Computer.Status)));
         }
         // Bad: 1 = possibly bad, 2 = confirmed bad.
         if (excludeBad == true)
@@ -584,9 +590,97 @@ public class PartsController : ControllerBase
     }
 
     /// <summary>
+    /// Split a prebuilt (or any single part) into individually entered component rows.
+    /// Component costs must sum exactly to the original cost. The original row is deleted.
+    /// </summary>
+    [HttpPost("{id:int}/split-pc")]
+    [Authorize(Policy = PermissionPolicies.Level3)]
+    public async Task<ActionResult<IEnumerable<Part>>> SplitPcPart(int id, [FromBody] SplitPcRequest request)
+    {
+        if (request?.Parts is null || request.Parts.Count == 0)
+            return BadRequest(new { message = "Enter at least one part to split." });
+        if (request.Parts.Count > 50)
+            return BadRequest(new { message = "Cannot split into more than 50 parts." });
+
+        var source = await _db.Parts.FindAsync(id);
+        if (source is null) return NotFound();
+        if (source.Cost is null)
+            return BadRequest(new { message = "Part must have a cost before it can be split." });
+
+        var knownTypes = await _db.PartTypes.AsNoTracking().Select(t => t.Type).ToListAsync();
+        var knownTypeSet = new HashSet<string>(knownTypes, StringComparer.OrdinalIgnoreCase);
+        var seenTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var created = new List<Part>(request.Parts.Count);
+        long costCents = 0;
+
+        foreach (var dto in request.Parts)
+        {
+            var type = dto.Type?.Trim();
+            var manufacturer = dto.Manufacturer?.Trim();
+            var modelNumber = dto.ModelNumber?.Trim();
+            var color = string.IsNullOrWhiteSpace(dto.Color) ? null : dto.Color.Trim();
+
+            if (string.IsNullOrWhiteSpace(type))
+                return BadRequest(new { message = "Each part must have a type." });
+            if (type.Length > 50)
+                return BadRequest(new { message = $"Part type '{type}' is too long." });
+            if (!seenTypes.Add(type))
+                return BadRequest(new { message = $"Duplicate part type '{type}'." });
+            if (!knownTypeSet.Contains(type))
+                return BadRequest(new { message = $"Unknown part type '{type}'." });
+            var canonicalType = knownTypes.First(t => t.Equals(type, StringComparison.OrdinalIgnoreCase));
+            if (string.IsNullOrWhiteSpace(manufacturer))
+                return BadRequest(new { message = $"Manufacturer is required for {type}." });
+            if (manufacturer.Length > 100)
+                return BadRequest(new { message = $"Manufacturer for {type} cannot exceed 100 characters." });
+            if (string.IsNullOrWhiteSpace(modelNumber))
+                return BadRequest(new { message = $"Model is required for {type}." });
+            if (modelNumber.Length > 100)
+                return BadRequest(new { message = $"Model for {type} cannot exceed 100 characters." });
+            if (color is { Length: > 50 })
+                return BadRequest(new { message = $"Color for {type} cannot exceed 50 characters." });
+            if (dto.Cost < 0)
+                return BadRequest(new { message = $"Cost for {type} cannot be negative." });
+
+            var cost = MoneyMath.Round2(dto.Cost);
+            costCents += ToCents(cost);
+
+            created.Add(new Part
+            {
+                Type = canonicalType,
+                Manufacturer = manufacturer,
+                ModelNumber = modelNumber,
+                Cost = cost,
+                Color = color,
+                OrderDate = source.OrderDate,
+                Seller = source.Seller,
+                OrderUrl = source.OrderUrl,
+                Condition = source.Condition,
+                Location = source.Location,
+                ReturnByDate = source.ReturnByDate,
+                Merchant = source.Merchant,
+                Received = source.Received,
+                TestedDate = source.TestedDate,
+                TestedUserId = source.TestedUserId
+            });
+        }
+
+        if (costCents != ToCents(source.Cost.Value))
+            return BadRequest(new { message = "Part costs must add up to the original part cost." });
+
+        _db.Parts.AddRange(created);
+        _db.Parts.Remove(source);
+        await _db.SaveChangesAsync();
+        return Ok(created);
+    }
+
+    /// <summary>
     /// Divide <paramref name="total"/> across <paramref name="quantity"/> shares in cents.
     /// The first (totalCents % quantity) shares get one extra cent.
     /// </summary>
+    internal static long ToCents(decimal value) =>
+        (long)Math.Round(value * 100m, MidpointRounding.AwayFromZero);
+
     internal static List<decimal> SplitCostCents(decimal total, int quantity)
     {
         var totalCents = (long)Math.Round(total * 100m, MidpointRounding.AwayFromZero);

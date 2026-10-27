@@ -26,10 +26,10 @@ public record SetBuildBuilderRequest(string? BuilderUserId);
 public class BuildsController : ControllerBase
 {
     private static readonly string[] BuildStatuses =
-        { "Planned", "In-progress", "Built", "Active", "Sold", "Returned", "Needs repair", "Traded", "Personal" };
+        { "Planned", "In-progress", "Built", "Active", "Sold", "Sold eBay", "Returned", "Needs repair", "Traded", "Personal" };
 
     private static readonly HashSet<string> StatusesThatConfirmParts =
-        new(StringComparer.OrdinalIgnoreCase) { "Built", "Active", "Sold" };
+        new(StringComparer.OrdinalIgnoreCase) { "Built", "Active", "Sold", "Sold eBay" };
 
     private readonly AppDbContext _db;
     private readonly PartSlotService _slots;
@@ -53,7 +53,7 @@ public class BuildsController : ControllerBase
                 c.Status == "In-progress" ? 1 :
                 c.Status == "Built" ? 2 :
                 c.Status == "Active" ? 3 :
-                c.Status == "Sold" ? 4 : 99)
+                ComputerStatus.SoldStatuses.Contains(c.Status) ? 4 : 99)
             .ThenByDescending(c => c.AddedDate)
             .Select(c => new
             {
@@ -385,8 +385,10 @@ public class BuildsController : ControllerBase
         if (computer is null) return NotFound();
 
         computer.Status = status;
-        if (status == "Sold")
+        if (ComputerStatus.IsSold(status))
             computer.SoldDate ??= DateTime.UtcNow;
+        if (ComputerStatus.IsEbaySold(status))
+            computer.Tax = 0;
         if (StatusesThatConfirmParts.Contains(status))
             await MarkAssignedPartsReceivedAndTestedAsync(id);
 
@@ -526,7 +528,7 @@ public class BuildsController : ControllerBase
                 c.Status == "In-progress" ||
                 c.Status == "Built" ||
                 c.Status == "Active" ||
-                (c.Status == "Sold" && c.SoldDate != null && c.SoldDate >= soldSince));
+                (ComputerStatus.SoldStatuses.Contains(c.Status) && c.SoldDate != null && c.SoldDate >= soldSince));
 
         if (access.Contains("All"))
             return pcs;

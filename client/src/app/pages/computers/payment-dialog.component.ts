@@ -7,7 +7,7 @@ import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
 import { MatButtonModule } from '@angular/material/button';
 import { MatDatepickerModule } from '@angular/material/datepicker';
-import { Computer, Payment, PAYMENT_METHODS, PAYMENT_TYPES } from '../../models';
+import { Computer, Payment, PAYMENT_METHODS, PAYMENT_TYPES, isEbaySold } from '../../models';
 import { taxFromInclusiveAmount } from '../../tax';
 import { computerDisplayName } from '../../part-display';
 
@@ -56,7 +56,7 @@ export type PaymentDialogResult = Partial<Payment> & {
 
         <mat-form-field appearance="outline">
           <mat-label>Method</mat-label>
-          <mat-select [(ngModel)]="model.method">
+          <mat-select [(ngModel)]="model.method" (selectionChange)="onMethodChange($event.value)">
             @for (m of methods; track m) {
               <mat-option [value]="m">{{ m }}</mat-option>
             }
@@ -99,7 +99,13 @@ export type PaymentDialogResult = Partial<Payment> & {
               {{ afterBalance | currency }}
             </strong>
             @if (afterBalance <= 0) {
-              <div class="ok-text">This will mark the computer as <strong>Sold</strong>.</div>
+              <div class="ok-text">
+                This will mark the computer as
+                <strong>{{ isEbayPayment ? 'Sold eBay' : 'Sold' }}</strong>.
+                @if (isEbayPayment) {
+                  eBay remits the sales tax, so this sale will not add to tax due.
+                }
+              </div>
             }
           </div>
         }
@@ -158,7 +164,22 @@ export class PaymentDialogComponent {
     return (this.remaining ?? 0) - sign * amt;
   }
 
+  get isEbayPayment(): boolean {
+    return this.model.method === 'eBay' || isEbaySold(this.data.computer.status);
+  }
+
+  onMethodChange(method: string | null): void {
+    if (method === 'eBay') {
+      this.model.tax = 0;
+      this.taxEdited = true;
+    }
+  }
+
   onAmountChange(amount: number | string | null): void {
+    if (this.isEbayPayment) {
+      this.model.tax = 0;
+      return;
+    }
     if (!this.taxEdited) {
       this.model.tax = taxFromInclusiveAmount(amount);
     }

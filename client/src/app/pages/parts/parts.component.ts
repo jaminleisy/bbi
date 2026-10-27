@@ -301,8 +301,10 @@ import { SplitPartDialogComponent, SplitPartDialogResult } from './split-part-di
                   <td mat-cell *matCellDef="let p">
                     @if (p.computerName) {
                       <span class="assigned-badge">{{ p.computerName }}</span>
-                      @if (p.computerStatus === 'Sold') {
-                        <span class="sold-badge" matTooltip="Assigned computer is sold">Sold</span>
+                      @if (p.computerStatus === 'Sold' || p.computerStatus === 'Sold eBay') {
+                        <span class="sold-badge" matTooltip="Assigned computer is sold">
+                          {{ p.computerStatus === 'Sold eBay' ? 'Sold eBay' : 'Sold' }}
+                        </span>
                       }
                     } @else {
                       <span style="color:#999">—</span>
@@ -359,7 +361,7 @@ import { SplitPartDialogComponent, SplitPartDialogResult } from './split-part-di
                     <button mat-icon-button matTooltip="Edit" (click)="openPartDialog(p)">
                       <mat-icon>edit</mat-icon>
                     </button>
-                    <button mat-icon-button matTooltip="Split bulk purchase" [disabled]="p.cost == null"
+                    <button mat-icon-button matTooltip="Split part" [disabled]="p.cost == null"
                             (click)="openSplitPart(p)">
                       <mat-icon>call_split</mat-icon>
                     </button>
@@ -864,14 +866,20 @@ export class PartsComponent implements OnInit {
       return;
     }
     const ref = this.dialog.open(SplitPartDialogComponent, {
-      data: { part },
-      width: '360px'
+      data: { part, types: (this.lookups?.types ?? []).map(t => t.type) },
+      width: '400px',
+      maxWidth: '96vw',
+      maxHeight: '96vh'
     });
     ref.afterClosed().subscribe((result: SplitPartDialogResult | undefined) => {
       if (!result) return;
-      this.api.splitPart(part.id, result.quantity, result.modelNumber).subscribe({
+      const req = result.mode === 'pc'
+        ? this.api.splitPcPart(part.id, result.parts)
+        : this.api.splitPart(part.id, result.quantity, result.modelNumber);
+      const count = result.mode === 'pc' ? result.parts.length : result.quantity;
+      req.subscribe({
         next: () => {
-          this.snack.open(`Split into ${result.quantity} parts`, undefined, { duration: 2500 });
+          this.snack.open(`Split into ${count} parts`, undefined, { duration: 2500 });
           this.load();
         },
         error: err => this.snack.open(err.error?.message ?? 'Split failed', 'OK')

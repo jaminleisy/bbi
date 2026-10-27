@@ -103,6 +103,16 @@ export class ApiService {
     return this.http.post<Part[]>(`${this.api}/parts/${id}/split`, { quantity, modelNumber });
   }
 
+  splitPcPart(id: number, parts: Array<{
+    type: string;
+    manufacturer: string;
+    modelNumber: string;
+    cost: number;
+    color?: string | null;
+  }>): Observable<Part[]> {
+    return this.http.post<Part[]>(`${this.api}/parts/${id}/split-pc`, { parts });
+  }
+
   deletePart(id: number) {
     return this.http.delete(`${this.api}/parts/${id}`);
   }
@@ -177,7 +187,7 @@ export class ApiService {
   }
 
   setComputerStatus(id: number, name: string) {
-    return this.http.post<{ status: string; soldDate?: string | null }>(`${this.api}/computers/${id}/status`, { name });
+    return this.http.post<{ status: string; soldDate?: string | null; tax?: number | null }>(`${this.api}/computers/${id}/status`, { name });
   }
 
   setComputerLocation(id: number, name: string) {

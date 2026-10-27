@@ -36,11 +36,11 @@ public class AddPaymentRequest
 public class ComputersController : ControllerBase
 {
     private static readonly string[] ValidStatuses =
-        { "Planned", "In-progress", "Built", "Active", "Sold", "Returned", "Needs repair", "Traded", "Personal" };
+        { "Planned", "In-progress", "Built", "Active", "Sold", "Sold eBay", "Returned", "Needs repair", "Traded", "Personal" };
 
     /// <summary>Statuses that imply inventory parts are on hand and verified.</summary>
     private static readonly HashSet<string> StatusesThatConfirmParts =
-        new(StringComparer.OrdinalIgnoreCase) { "Built", "Active", "Sold" };
+        new(StringComparer.OrdinalIgnoreCase) { "Built", "Active", "Sold", "Sold eBay" };
 
     private static readonly string[] ValidTypes = { "PC", "Parts" };
 
@@ -55,7 +55,8 @@ public class ComputersController : ControllerBase
         ["Planned"] = 6,
         ["Returned"] = 7,
         ["Traded"] = 8,
-        ["Sold"] = 9
+        ["Sold"] = 9,
+        ["Sold eBay"] = 9
     };
 
     /// <summary>Owner's user id; wages paid to this user count toward Ben Profit.</summary>
@@ -101,14 +102,14 @@ public class ComputersController : ControllerBase
 
         if (soldOnly)
         {
-            query = query.Where(c => c.Status == "Sold");
+            query = query.Where(c => ComputerStatus.SoldStatuses.Contains(c.Status));
             if (soldYear.HasValue)
                 query = query.Where(c => c.SoldDate != null && c.SoldDate.Value.Year == soldYear.Value);
         }
         else
         {
             if (!includeSold)
-                query = query.Where(c => c.Status != "Sold");
+                query = query.Where(c => !ComputerStatus.SoldStatuses.Contains(c.Status));
             if (!includeTraded)
                 query = query.Where(c => c.Status != "Traded");
             if (!includePersonal)
@@ -173,6 +174,9 @@ public class ComputersController : ControllerBase
                 JoshSharePercentage = c.Shares
                     .Where(s => s.BuilderUserId == "Josh B" || s.BuilderUserId.StartsWith("Josh B"))
                     .Sum(s => (decimal?)s.Percentage),
+                NonShareWages = c.Wages
+                    .Where(w => !c.Shares.Any(s => s.BuilderUserId == w.BuilderUserId))
+                    .Sum(w => (decimal?)w.Amount) ?? 0,
                 // One Parts projection (not three) so EF does not join Parts repeatedly.
                 PartsMeta = c.Parts.Select(p => new { p.Type, p.Location }).ToList(),
                 PlaceholderTypes = c.Type == "PC"
@@ -233,6 +237,9 @@ public class ComputersController : ControllerBase
                 ProfitBen = profit - c.WagesBranden - c.WagesJosh,
                 c.WagesNonJosh,
                 c.JoshSharePercentage,
+                JoshShareAmount = c.JoshSharePercentage is decimal jp
+                    ? MoneyMath.Round2((profit - c.NonShareWages) * (jp / 100m))
+                    : (decimal?)null,
                 BenProfit = BenProfitOf(profit, c.WagesNonJosh + c.WagesJosh, c.WagesBenL),
                 IsShipping = !string.IsNullOrEmpty(c.TrackingNumber) || !string.IsNullOrEmpty(c.CustomerAddress1),
                 MissingRequiredTypes = missingRequired,
@@ -245,9 +252,9 @@ public class ComputersController : ControllerBase
                 Shares = Array.Empty<object>()
             };
         })
-        .OrderBy(x => x.Status != "Sold" && x.HasDeposit ? 0 : 1)
+        .OrderBy(x => !ComputerStatus.IsSold(x.Status) && x.HasDeposit ? 0 : 1)
         .ThenBy(x => StatusOrder.TryGetValue(x.Status, out var o) ? o : 99)
-        .ThenByDescending(x => x.Status == "Sold" ? x.SoldDate : x.AddedDate)
+        .ThenByDescending(x => ComputerStatus.IsSold(x.Status) ? x.SoldDate : x.AddedDate)
         .ToList();
 
         return result;
@@ -355,6 +362,9 @@ public class ComputersController : ControllerBase
             ProfitBen = profit - wagesBranden - wagesJosh,
             WagesNonJosh = wagesNonJosh,
             JoshSharePercentage = joshSharePercentage,
+            JoshShareAmount = joshSharePercentage is decimal jp
+                ? MoneyMath.Round2(shareBase * (jp / 100m))
+                : (decimal?)null,
             BenProfit = BenProfitOf(profit, wagesNonJosh + wagesJosh, wagesBenL),
             IsShipping = !string.IsNullOrEmpty(computer.TrackingNumber)
                          || !string.IsNullOrEmpty(computer.CustomerAddress1),
@@ -416,6 +426,7 @@ public class ComputersController : ControllerBase
 
         computer.AddedDate = DateTime.UtcNow;
         computer.AddedUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        ApplySoldStatusEffects(computer);
 
         // Attach any parts by id
         var partIds = computer.Parts.Select(p => p.Id).ToList();
@@ -478,6 +489,7 @@ public class ComputersController : ControllerBase
         existing.TrackingStatus = computer.TrackingStatus;
         existing.Notes = computer.Notes;
         existing.ExpectedCompletionDate = computer.ExpectedCompletionDate;
+        ApplySoldStatusEffects(existing);
 
         if (StatusesThatConfirmParts.Contains(existing.Status))
             await MarkAssignedPartsReceivedAndTestedAsync(id);
@@ -635,12 +647,16 @@ public class ComputersController : ControllerBase
         // Partial payments leave Computer.Tax unchanged (e.g. estimated tax).
         // Use tax-of-total (not Σ rounded per-payment taxes) so pretax + tax
         // equals the money collected without a phantom penny.
-        if (fullyPaid)
-            computer.Tax = RollupTaxWhenFullyPaid(computer.Payments, netPaid);
+        var isEbaySale = ComputerStatus.IsEbaySold(computer.Status)
+            || string.Equals(request.Method, "eBay", StringComparison.OrdinalIgnoreCase);
 
-        if (computer.Status != "Sold" && fullyPaid)
+        // eBay remits sales tax, so eBay payoffs never roll tax onto the computer.
+        if (fullyPaid)
+            computer.Tax = isEbaySale ? 0 : RollupTaxWhenFullyPaid(computer.Payments, netPaid);
+
+        if (!ComputerStatus.IsSold(computer.Status) && fullyPaid)
         {
-            computer.Status = "Sold";
+            computer.Status = isEbaySale ? ComputerStatus.SoldEbay : ComputerStatus.Sold;
             computer.SoldDate ??= DateTime.UtcNow;
             await MarkAssignedPartsReceivedAndTestedAsync(id);
         }
@@ -706,13 +722,12 @@ public class ComputersController : ControllerBase
             return BadRequest(new { message = $"Status must be one of: {string.Join(", ", ValidStatuses)}." });
 
         computer.Status = value.Name;
-        if (value.Name == "Sold")
-            computer.SoldDate ??= DateTime.UtcNow;
+        ApplySoldStatusEffects(computer);
         if (StatusesThatConfirmParts.Contains(value.Name))
             await MarkAssignedPartsReceivedAndTestedAsync(id);
 
         await _db.SaveChangesAsync();
-        return Ok(new { computer.Status, computer.SoldDate });
+        return Ok(new { computer.Status, computer.SoldDate, computer.Tax });
     }
 
     [HttpPost("{id:int}/location")]
@@ -759,10 +774,23 @@ public class ComputersController : ControllerBase
         if (computer is null) return NotFound();
 
         computer.Price = request.Price is null ? null : MoneyMath.Round2(request.Price.Value);
-        // Same tax-inclusive formula as payment / new-computer entry.
-        computer.Tax = MoneyMath.TaxFromInclusiveAmount(computer.Price);
+        // eBay remits tax; keep those sales at $0 tax even if price is edited.
+        computer.Tax = ComputerStatus.IsEbaySold(computer.Status)
+            ? 0
+            : MoneyMath.TaxFromInclusiveAmount(computer.Price);
         await _db.SaveChangesAsync();
         return Ok(new { price = computer.Price, tax = computer.Tax });
+    }
+
+    /// <summary>
+    /// Sold statuses get a sold date; eBay sales have no remitted tax (marketplace facilitator).
+    /// </summary>
+    private static void ApplySoldStatusEffects(Computer computer)
+    {
+        if (ComputerStatus.IsSold(computer.Status))
+            computer.SoldDate ??= DateTime.UtcNow;
+        if (ComputerStatus.IsEbaySold(computer.Status))
+            computer.Tax = 0;
     }
 
     private async Task<string?> Validate(Computer computer)

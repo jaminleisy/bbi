@@ -513,7 +513,7 @@ import { PartDialogComponent } from '../parts/part-dialog.component';
       flex-wrap: wrap;
     }
     .note-date { color: #777; font-size: 13px; }
-    .note-text { white-space: pre-wrap; line-height: 1.4; }
+    .note-text { white-space: pre-wrap; line-height: 1.45; font-size: 16px; color: #444; }
 
     @media (max-width: 599px) {
       .card { padding: 12px; }

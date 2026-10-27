@@ -15,7 +15,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatChipsModule } from '@angular/material/chips';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { ApiService } from '../../services/api.service';
-import { Computer, Lookups, Part, STATUSES, Wage, ComputerShare } from '../../models';
+import { Computer, Lookups, Part, STATUSES, Wage, ComputerShare, isSoldStatus, isEbaySold } from '../../models';
 import { computerDisplayName, groupIdenticalParts, partModelText, partQtyLabel, sortByPartType, GroupedPart } from '../../part-display';
 import { PartDialogComponent } from '../parts/part-dialog.component';
 import { ComputerDialogComponent } from './computer-dialog.component';
@@ -154,6 +154,10 @@ const EXCLUDED_FROM_ALL = new Set(['Traded', 'Personal']);
                             ? 'One or more parts are not at ' + c.location
                             : 'One or more parts are not at the computer location'">trolley</mat-icon>
               }
+              @if (mode === 'sold' && hasUnpaidJoshShare(c)) {
+                <mat-icon class="josh-share-warn"
+                          [matTooltip]="unpaidJoshShareTooltip">warning</mat-icon>
+              }
             </td>
           </ng-container>
 
@@ -164,6 +168,9 @@ const EXCLUDED_FROM_ALL = new Set(['Traded', 'Personal']);
             <td mat-cell *matCellDef="let c" class="name-cell">
               <strong>{{ computerDisplayName(c) }}</strong>
               <span class="type-badge">{{ c.type }}</span>
+              @if (isEbaySold(c.status)) {
+                <span class="ebay-badge" matTooltip="Sold on eBay — tax remitted by eBay">eBay</span>
+              }
             </td>
           </ng-container>
 
@@ -226,7 +233,7 @@ const EXCLUDED_FROM_ALL = new Set(['Traded', 'Personal']);
               Price <mat-icon class="sort-icon">{{ sortIcon('price') }}</mat-icon>
             </th>
             <td mat-cell *matCellDef="let c" (click)="openPriceEdit(c); $event.stopPropagation()" class="price-cell">
-              {{ c.price != null ? (c.price | currency) : '—' }}@if (c.status !== 'Sold' && c.price != null) { <small> (est)</small> }
+              {{ c.price != null ? (c.price | currency) : '—' }}@if (!isSoldStatus(c.status) && c.price != null) { <small> (est)</small> }
             </td>
           </ng-container>
 
@@ -241,7 +248,13 @@ const EXCLUDED_FROM_ALL = new Set(['Traded', 'Personal']);
             <th mat-header-cell *matHeaderCellDef (click)="sortBy('tax')" class="sortable-header">
               Taxes <mat-icon class="sort-icon">{{ sortIcon('tax') }}</mat-icon>
             </th>
-            <td mat-cell *matCellDef="let c">{{ c.tax != null ? (c.tax | currency) : '—' }}</td>
+            <td mat-cell *matCellDef="let c">
+              @if (isEbaySold(c.status)) {
+                <span class="ebay-badge" matTooltip="eBay remits sales tax">eBay</span>
+              } @else {
+                {{ c.tax != null ? (c.tax | currency) : '—' }}
+              }
+            </td>
           </ng-container>
 
           <ng-container matColumnDef="profit">
@@ -252,7 +265,7 @@ const EXCLUDED_FROM_ALL = new Set(['Traded', 'Personal']);
             <td mat-cell *matCellDef="let c">
               <span [class.ok-text]="c.profit > 0" [class.warn-text]="c.profit < 0">
                 {{ c.profit | currency }}
-              </span>@if (c.status !== 'Sold') { <small> (est)</small> }
+              </span>@if (!isSoldStatus(c.status)) { <small> (est)</small> }
             </td>
           </ng-container>
 
@@ -266,17 +279,24 @@ const EXCLUDED_FROM_ALL = new Set(['Traded', 'Personal']);
 
           <ng-container matColumnDef="joshShare">
             <th mat-header-cell *matHeaderCellDef (click)="sortBy('joshShare')" class="sortable-header"
-                matTooltip="Josh's share percentage / Josh's wages">
+                matTooltip="Josh's share percentage / Josh's wages. Unpaid shares show as a gray italic estimate.">
               Josh Share <mat-icon class="sort-icon">{{ sortIcon('joshShare') }}</mat-icon>
             </th>
             <td mat-cell *matCellDef="let c">
-              @if (c.joshSharePercentage != null) {
+              @if ((c.joshSharePercentage ?? 0) > 0) {
                 {{ c.joshSharePercentage }}%
-              }
-              @if (c.joshSharePercentage != null && c.wagesJosh) {
-                <span class="josh-sep">/</span>
-              }
-              @if (c.wagesJosh) {
+                @if (c.wagesJosh || joshShareEstimate(c) != null) {
+                  <span class="josh-sep">/</span>
+                }
+                @if (c.wagesJosh) {
+                  {{ c.wagesJosh | currency }}
+                } @else if (joshShareEstimate(c) != null) {
+                  <span class="josh-share-est"
+                        matTooltip="Estimated share — Josh has not been paid wages yet">
+                    {{ joshShareEstimate(c) | currency }}
+                  </span>
+                }
+              } @else if (c.joshSharePercentage == null && c.wagesJosh) {
                 {{ c.wagesJosh | currency }}
               }
             </td>
@@ -461,7 +481,16 @@ const EXCLUDED_FROM_ALL = new Set(['Traded', 'Personal']);
                       @for (pay of c.payments; track pay.id) {
                         <tr>
                           <td>{{ pay.type }}</td>
-                          <td>{{ pay.amount | currency }}</td>
+                          <td>
+                            @if (pay.paymentUrl?.trim()) {
+                              <a [href]="pay.paymentUrl" target="_blank" rel="noopener"
+                                 matTooltip="Open payment URL" (click)="$event.stopPropagation()">
+                                {{ pay.amount | currency }}
+                              </a>
+                            } @else {
+                              {{ pay.amount | currency }}
+                            }
+                          </td>
                           <td>{{ pay.tax != null ? (pay.tax | currency) : '—' }}</td>
                           <td>{{ pay.fee != null ? (pay.fee | currency) : '—' }}</td>
                           <td>{{ pay.method }}</td>
@@ -563,6 +592,7 @@ const EXCLUDED_FROM_ALL = new Set(['Traded', 'Personal']);
               class="computer-row"
               [class.expanded-row]="expandedId === c.id"
               [class.paid-row]="mode === 'sold' || hasAnyPayment(c)"
+              [class.josh-unpaid-row]="mode === 'sold' && hasUnpaidJoshShare(c)"
               (click)="toggleExpand(c)"></tr>
           <tr mat-row *matRowDef="let row; columns: ['expandedDetail']" class="detail-row"></tr>
         </table>
@@ -651,6 +681,10 @@ const EXCLUDED_FROM_ALL = new Set(['Traded', 'Personal']);
       font-size: 11px; background: #e3f2fd; color: #1565c0; border-radius: 10px;
       padding: 1px 8px; margin-left: 8px; vertical-align: middle;
     }
+    .ebay-badge {
+      font-size: 11px; background: #e3f2fd; color: #0d47a1; border-radius: 10px;
+      padding: 1px 8px; margin-left: 6px; vertical-align: middle; font-weight: 500;
+    }
     .status-badge { font-size: 12px; border-radius: 10px; padding: 2px 10px; background: #eee; }
     .status-sold { background: #c8e6c9; color: #256029; }
     .status-active { background: #bbdefb; color: #0d47a1; }
@@ -725,6 +759,22 @@ const EXCLUDED_FROM_ALL = new Set(['Traded', 'Personal']);
       color: #2e7d32;
     }
     .josh-sep { color: #999; margin: 0 4px; }
+    .josh-share-est {
+      color: #bdbdbd;
+      font-style: italic;
+      cursor: help;
+    }
+    .josh-unpaid-row td:not(.loc-ben):not(.loc-josh) { background: #ffebee; }
+    .josh-unpaid-row td.price-cell:hover { background: #ffcdd2; }
+    .josh-share-warn {
+      font-size: 20px;
+      width: 20px;
+      height: 20px;
+      vertical-align: middle;
+      color: #d32f2f;
+      margin-left: 2px;
+      cursor: help;
+    }
     .loc-ben { background: #c8e6c9; }
     .loc-josh { background: #bbdefb; }
     .warn-cell {
@@ -793,6 +843,21 @@ export class ComputersComponent implements OnInit {
   partModelText = partModelText;
   partQtyLabel = partQtyLabel;
   computerDisplayName = computerDisplayName;
+  isSoldStatus = isSoldStatus;
+  isEbaySold = isEbaySold;
+  readonly unpaidJoshShareTooltip =
+    'Josh has a share percentage set on this PC, but no wages have been recorded for him yet. The share amount shown is only an estimate.';
+
+  hasUnpaidJoshShare(c: Computer): boolean {
+    return (c.joshSharePercentage ?? 0) > 0 && !c.wagesJosh;
+  }
+
+  joshShareEstimate(c: Computer): number | null {
+    if (c.joshSharePercentage == null || c.joshSharePercentage <= 0) return null;
+    if (c.joshShareAmount != null) return c.joshShareAmount;
+    const base = c.shareBase ?? ((c.profit ?? 0) - (c.wagesNonJosh ?? 0));
+    return Math.round(base * (c.joshSharePercentage / 100) * 100) / 100;
+  }
   mode: ComputersPageMode = 'in-progress';
   displayedColumns: string[] = [];
   computers: Computer[] = [];
@@ -836,7 +901,7 @@ export class ComputersComponent implements OnInit {
     this.mode = mode === 'sold' ? 'sold' : 'in-progress';
     this.displayedColumns = this.mode === 'sold'
       ? [
-          'warning', 'name', 'builder',
+          'warning', 'name', 'status', 'builder',
           'partsCost', 'price', 'soldDate', 'tax', 'profit', 'wages', 'joshShare', 'benProfit',
           'paid', 'customer', 'actions'
         ]
@@ -894,7 +959,7 @@ export class ComputersComponent implements OnInit {
 
   private inTab(c: Computer, tab: InProgressTab): boolean {
     const stickyTab = this.stickySoldTabs.get(c.id);
-    if (stickyTab !== undefined && c.status === 'Sold') return tab === 'all' || tab === stickyTab;
+    if (stickyTab !== undefined && isSoldStatus(c.status)) return tab === 'all' || tab === stickyTab;
     const def = this.tabs.find(t => t.key === tab);
     if (!def?.statuses) return !EXCLUDED_FROM_ALL.has(c.status);
     return def.statuses.includes(c.status);
@@ -941,6 +1006,7 @@ export class ComputersComponent implements OnInit {
   private sortValue(c: Computer, column: string): string | number {
     switch (column) {
       case 'warning':
+        if (this.mode === 'sold' && this.hasUnpaidJoshShare(c)) return 3;
         if (c.missingRequiredTypes?.length && !c.ignoreIncomplete) return 2;
         if (c.hasWrongLocationParts) return 1;
         return 0;
@@ -1060,6 +1126,7 @@ export class ComputersComponent implements OnInit {
     target.wages = detail.wages ?? [];
     target.shares = detail.shares ?? [];
     target.shareBase = detail.shareBase;
+    target.joshShareAmount = detail.joshShareAmount;
     target.hasWrongLocationParts = detail.hasWrongLocationParts
       ?? this.computeHasWrongLocationParts(target.location, target.parts);
   }
@@ -1096,7 +1163,7 @@ export class ComputersComponent implements OnInit {
   }
 
   private noteIfSold(computer: Computer, status?: string | null): void {
-    if (this.mode === 'in-progress' && (status ?? computer.status) === 'Sold') {
+    if (this.mode === 'in-progress' && isSoldStatus(status ?? computer.status)) {
       this.markStickySold(computer.id);
     }
   }
@@ -1133,6 +1200,17 @@ export class ComputersComponent implements OnInit {
       next: res => {
         computer.status = res.status;
         if (res.soldDate) computer.soldDate = res.soldDate;
+        if (res.tax !== undefined) {
+          const oldTax = computer.tax ?? 0;
+          computer.tax = res.tax;
+          const taxDelta = oldTax - (res.tax ?? 0);
+          if (taxDelta !== 0) {
+            computer.profit = (computer.profit ?? 0) + taxDelta;
+            computer.benProfit = (computer.benProfit ?? 0) + taxDelta;
+            computer.profitBen = (computer.profit ?? 0)
+              - (computer.wagesBranden ?? 0) - (computer.wagesJosh ?? 0);
+          }
+        }
         this.noteIfSold(computer, res.status);
         // Built/Active/Sold also marks parts received/tested — refresh expand details.
         if (this.detailLoaded.has(computer.id)) this.refreshComputer(computer.id);
@@ -1146,7 +1224,7 @@ export class ComputersComponent implements OnInit {
     this.api.setComputerLocation(computer.id, location ?? '').subscribe({
       next: () => {
         computer.location = location;
-        const syncParts = ['Built', 'Active', 'Sold'].includes(computer.status);
+        const syncParts = ['Built', 'Active', 'Sold', 'Sold eBay'].includes(computer.status);
         if (syncParts && computer.parts?.length) {
           for (const p of computer.parts) p.location = location;
         }
@@ -1237,8 +1315,8 @@ export class ComputersComponent implements OnInit {
         : this.api.createComputer(result);
       req.subscribe({
         next: saved => {
-          if (computer && saved?.status === 'Sold') this.noteIfSold(computer, saved.status);
-          else if (result.status === 'Sold' && result.id) this.markStickySold(result.id);
+          if (computer && isSoldStatus(saved?.status)) this.noteIfSold(computer, saved.status);
+          else if (isSoldStatus(result.status) && result.id) this.markStickySold(result.id);
 
           const newId = saved?.id ?? result.id;
           const partIds = createOpts?.partIds ?? [];

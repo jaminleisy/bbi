@@ -236,7 +236,7 @@ interface PreviewImage {
     <mat-dialog-actions align="end">
       @if (canSplit) {
         <button mat-stroked-button type="button" class="split-btn" (click)="saveAndSplit()"
-                matTooltip="Save, then split this bulk purchase into unit rows">
+                matTooltip="Save, then split this part">
           <mat-icon>call_split</mat-icon> Split
         </button>
       }
@@ -395,7 +395,8 @@ export class PartDialogComponent implements OnInit, OnDestroy {
           scam: data.part.scam ?? null,
           lost: data.part.lost ?? null
         }
-      : { hasRgb: false, received: false, condition: 'New', bad: null, scam: null, lost: null };
+      : { hasRgb: false, received: false, condition: 'New', bad: null, scam: null, lost: null,
+          orderDate: new Date() as unknown as string };
   }
 
   ngOnInit(): void {

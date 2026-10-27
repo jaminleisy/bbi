@@ -350,8 +350,8 @@ import { BuildSummary, BuildPartSummary } from '../../models';
       display: flex;
       flex-direction: column;
       gap: 2px;
-      font-size: 13px;
-      line-height: 1.35;
+      font-size: 15px;
+      line-height: 1.4;
     }
     .comment-meta {
       font-size: 11px;
@@ -359,11 +359,8 @@ import { BuildSummary, BuildPartSummary } from '../../models';
     }
     .comment-text {
       color: #444;
+      white-space: pre-wrap;
       word-break: break-word;
-      display: -webkit-box;
-      -webkit-line-clamp: 3;
-      -webkit-box-orient: vertical;
-      overflow: hidden;
     }
 
     .status-badge {
@@ -380,6 +377,7 @@ import { BuildSummary, BuildPartSummary } from '../../models';
     .status-built { background: #bbdefb; color: #0d47a1; }
     .status-active { background: #c8e6c9; color: #256029; }
     .status-sold { background: #2e7d32; color: #fff; }
+    .status-sold-ebay { background: #1565c0; color: #fff; }
     .status-returned { background: #ffcdd2; color: #b71c1c; }
     .status-needs-repair { background: #ffe0b2; color: #e65100; }
     .status-traded { background: #d1c4e9; color: #4527a0; }

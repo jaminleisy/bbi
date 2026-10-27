@@ -8,7 +8,7 @@ import { MatSelectModule } from '@angular/material/select';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCheckboxModule } from '@angular/material/checkbox';
 import { MatDatepickerModule } from '@angular/material/datepicker';
-import { Computer, Lookups, STATUSES } from '../../models';
+import { Computer, Lookups, STATUSES, isEbaySold } from '../../models';
 import { taxFromInclusiveAmount } from '../../tax';
 
 export interface ComputerDialogData {
@@ -41,7 +41,7 @@ export interface ComputerDialogData {
 
         <mat-form-field appearance="outline">
           <mat-label>Status</mat-label>
-          <mat-select [(ngModel)]="model.status">
+          <mat-select [(ngModel)]="model.status" (selectionChange)="onStatusChange($event.value)">
             @for (s of statuses; track s) {
               <mat-option [value]="s">{{ s }}</mat-option>
             }
@@ -86,7 +86,11 @@ export interface ComputerDialogData {
 
         <mat-form-field appearance="outline">
           <mat-label>Tax (portion of price)</mat-label>
-          <input matInput type="number" [(ngModel)]="model.tax" (ngModelChange)="onTaxChange()">
+          <input matInput type="number" [(ngModel)]="model.tax" (ngModelChange)="onTaxChange()"
+                 [disabled]="isEbaySold(model.status)">
+          @if (isEbaySold(model.status)) {
+            <mat-hint>eBay remits sales tax</mat-hint>
+          }
         </mat-form-field>
 
         <mat-form-field appearance="outline">
@@ -220,6 +224,7 @@ export interface ComputerDialogData {
 })
 export class ComputerDialogComponent {
   statuses = STATUSES;
+  isEbaySold = isEbaySold;
   model: Partial<Computer>;
   /** Once the user edits Tax, stop auto-updating it from Price. */
   private taxEdited = false;
@@ -239,8 +244,19 @@ export class ComputerDialogComponent {
   }
 
   onPriceChange(price: number | string | null): void {
+    if (isEbaySold(this.model.status)) {
+      this.model.tax = 0;
+      return;
+    }
     if (!this.taxEdited) {
       this.model.tax = taxFromInclusiveAmount(price);
+    }
+  }
+
+  onStatusChange(status: string): void {
+    if (isEbaySold(status)) {
+      this.model.tax = 0;
+      this.taxEdited = true;
     }
   }
 

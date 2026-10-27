@@ -26,6 +26,8 @@ public class ReportsController : ControllerBase
     /// Computer.SoldDate. By default wages are keyed by Wage.PaidDate; with
     /// wagesBySaleDate=true, month wages are the wages assigned to computers
     /// sold that month (regardless of when paid).
+    /// eBay sales (status "Sold eBay") are reported only in EbaySales — they do
+    /// not change Total Sales, tax due, parts, wages-by-sale-date, or profit.
     /// </summary>
     [HttpGet("monthly")]
     public async Task<ActionResult<object>> GetMonthlySummary(
@@ -33,7 +35,7 @@ public class ReportsController : ControllerBase
         [FromQuery] bool wagesBySaleDate = false)
     {
         var saleYears = await _db.Computers.AsNoTracking()
-            .Where(c => c.Status == "Sold" && c.SoldDate != null)
+            .Where(c => ComputerStatus.SoldStatuses.Contains(c.Status) && c.SoldDate != null)
             .Select(c => c.SoldDate!.Value.Year)
             .Distinct()
             .ToListAsync();
@@ -56,7 +58,7 @@ public class ReportsController : ControllerBase
 
         // Aggregate parts/payments in SQL — avoid Include graphs (cartesian explode).
         var sold = await _db.Computers.AsNoTracking()
-            .Where(c => c.Status == "Sold"
+            .Where(c => ComputerStatus.SoldStatuses.Contains(c.Status)
                         && c.SoldDate != null
                         && c.SoldDate >= yearStart
                         && c.SoldDate < yearEnd)
@@ -64,6 +66,7 @@ public class ReportsController : ControllerBase
             {
                 c.Id,
                 c.Name,
+                c.Status,
                 NameParts = c.Parts.Select(p => new
                 {
                     p.Type, p.Manufacturer, p.ModelNumber, p.Color
@@ -100,11 +103,21 @@ public class ReportsController : ControllerBase
                 g => g.Key,
                 g => g.OrderBy(w => w.PaidDate).ThenBy(w => w.Id).ToList());
 
+        var shareRows = await _db.ComputerShares.AsNoTracking()
+            .Where(s => soldIds.Contains(s.ComputerId))
+            .Select(s => new { s.ComputerId, s.BuilderUserId, s.Percentage })
+            .ToListAsync();
+        var sharesLookup = shareRows
+            .GroupBy(s => s.ComputerId)
+            .ToDictionary(g => g.Key, g => g.ToList());
+
         Dictionary<int, decimal> wagesByMonth;
         if (wagesBySaleDate)
         {
             // Attribute wages to the month the assigned computer was sold.
+            // eBay sales stay out of every column except EbaySales.
             wagesByMonth = sold
+                .Where(c => !ComputerStatus.IsEbaySold(c.Status))
                 .GroupBy(c => c.SoldDate!.Value.Month)
                 .ToDictionary(
                     g => g.Key,
@@ -134,11 +147,13 @@ public class ReportsController : ControllerBase
             var wagesTotal = wagesByMonth.TryGetValue(month, out var wt) ? wt : 0m;
 
             decimal totalSales = 0;
+            decimal ebaySales = 0;
             decimal exemptSales = 0;
             decimal totalBeforeTax = 0;
             decimal taxDue = 0;
             decimal partsCost = 0;
             decimal grossProfit = 0;
+            var regularSoldCount = 0;
 
             var sales = inMonth.Select(c =>
             {
@@ -152,12 +167,13 @@ public class ReportsController : ControllerBase
                 var tax = MoneyMath.Round2(c.Tax ?? 0);
                 var cost = MoneyMath.Round2(c.PartsCost);
                 var fees = MoneyMath.Round2(c.PaymentFees);
-                var isExempt = tax == 0m;
+                var isEbay = ComputerStatus.IsEbaySold(c.Status);
+                var isExempt = !isEbay && tax == 0m;
 
                 // Snap tax to the inclusive 9.25% formula when it only differs by
                 // a few cents — typical Σ of per-payment rounded taxes vs tax-of-total.
                 // Larger gaps (manual / non-standard rates) are left alone.
-                if (!isExempt && price != 0)
+                if (!isEbay && !isExempt && price != 0)
                 {
                     var formulaTax = MoneyMath.TaxFromInclusiveAmount(price) ?? tax;
                     if (Math.Abs(formulaTax - tax) <= 0.05m)
@@ -179,15 +195,45 @@ public class ReportsController : ControllerBase
                     })
                     .ToList();
                 var computerWagesTotal = MoneyMath.Round2(computerWages.Sum(w => w.Amount));
+                var wagesJosh = MoneyMath.Round2(
+                    computerWages.Where(w => IsJosh(w.BuilderUserId)).Sum(w => w.Amount));
 
-                totalSales += price;
-                if (isExempt)
-                    exemptSales += price;
+                sharesLookup.TryGetValue(c.Id, out var computerShares);
+                var shares = computerShares ?? [];
+                var joshShares = shares.Where(s => IsJosh(s.BuilderUserId)).ToList();
+                decimal? joshSharePercentage = joshShares.Count > 0
+                    ? joshShares.Sum(s => s.Percentage)
+                    : null;
+
+                var shareRecipientIds = shares
+                    .Select(s => s.BuilderUserId)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var nonShareWages = computerWages
+                    .Where(w => !shareRecipientIds.Contains(w.BuilderUserId))
+                    .Sum(w => w.Amount);
+                var shareBase = saleProfit - nonShareWages;
+                decimal? joshShareAmount = joshSharePercentage is decimal jp
+                    ? MoneyMath.Round2(shareBase * (jp / 100m))
+                    : null;
+
+                // eBay remits sales tax. Those sales are tracked only in EbaySales
+                // and must not change Total Sales, tax, parts, wages, or profit.
+                if (isEbay)
+                {
+                    ebaySales += price;
+                }
                 else
-                    totalBeforeTax += pretax;
-                taxDue += tax;
-                partsCost += cost;
-                grossProfit += saleProfit;
+                {
+                    regularSoldCount++;
+                    totalSales += price;
+                    if (isExempt)
+                        exemptSales += price;
+                    else
+                        totalBeforeTax += pretax;
+                    taxDue += tax;
+                    partsCost += cost;
+                    grossProfit += saleProfit;
+                }
 
                 return new
                 {
@@ -197,13 +243,17 @@ public class ReportsController : ControllerBase
                     SoldDate = c.SoldDate,
                     c.CustomerName,
                     Price = price,
-                    Tax = tax,
+                    Tax = isEbay ? 0m : tax,
                     IsExempt = isExempt,
+                    IsEbay = isEbay,
                     BeforeTax = pretax,
                     PartsCost = cost,
                     PaymentFees = fees,
                     WagesTotal = computerWagesTotal,
                     Wages = computerWages,
+                    WagesJosh = wagesJosh,
+                    JoshSharePercentage = joshSharePercentage,
+                    JoshShareAmount = joshShareAmount,
                     Profit = saleProfit
                 };
             })
@@ -216,8 +266,9 @@ public class ReportsController : ControllerBase
             {
                 Month = month,
                 MonthName = System.Globalization.CultureInfo.CurrentCulture.DateTimeFormat.GetMonthName(month),
-                SoldCount = inMonth.Count,
+                SoldCount = regularSoldCount,
                 TotalSales = MoneyMath.Round2(totalSales),
+                EbaySales = MoneyMath.Round2(ebaySales),
                 ExemptSales = MoneyMath.Round2(exemptSales),
                 TotalBeforeTax = MoneyMath.Round2(totalBeforeTax),
                 TaxDue = MoneyMath.Round2(taxDue),
@@ -232,6 +283,7 @@ public class ReportsController : ControllerBase
         {
             SoldCount = months.Sum(m => m.SoldCount),
             TotalSales = MoneyMath.Round2(months.Sum(m => m.TotalSales)),
+            EbaySales = MoneyMath.Round2(months.Sum(m => m.EbaySales)),
             ExemptSales = MoneyMath.Round2(months.Sum(m => m.ExemptSales)),
             TotalBeforeTax = MoneyMath.Round2(months.Sum(m => m.TotalBeforeTax)),
             TaxDue = MoneyMath.Round2(months.Sum(m => m.TaxDue)),
@@ -251,4 +303,7 @@ public class ReportsController : ControllerBase
             YearTotals = yearTotals
         };
     }
+
+    private static bool IsJosh(string builderUserId) =>
+        builderUserId.StartsWith("Josh B", StringComparison.OrdinalIgnoreCase);
 }
