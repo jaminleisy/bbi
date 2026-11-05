@@ -1,4 +1,4 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, HostListener, OnDestroy, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
@@ -21,6 +21,12 @@ import {
 import { computerDisplayName, groupIdenticalParts, partDisplayLabel, partQtyLabel, partTypeLabel, sortByPartType, GroupedPart } from '../../part-display';
 import { PickPartDialogComponent } from './pick-part-dialog.component';
 import { PartDialogComponent } from '../parts/part-dialog.component';
+
+interface GroupPhoto {
+  partId: number;
+  imageId: number;
+  createdDate: string;
+}
 
 @Component({
   selector: 'app-build-detail',
@@ -101,27 +107,49 @@ import { PartDialogComponent } from '../parts/part-dialog.component';
                     {{ typeLabel(g.sample.type) }}
                   </td>
                   <td class="col-part">
-                    <div class="part-name">{{ partLabel(g.sample) }}</div>
-                    @if (canEdit || canEditParts) {
-                      <div class="row-actions">
-                        @if (canEditParts) {
-                          <button mat-button type="button" class="mini-btn"
-                                  (click)="editPart(g.sample)" [disabled]="busy">
-                            Edit part
-                          </button>
-                        }
-                        @if (canEdit) {
-                          <button mat-button type="button" class="mini-btn"
-                                  (click)="replacePartWithPart(g.sample)" [disabled]="busy">
-                            Replace part
-                          </button>
-                          <button mat-button type="button" class="mini-btn"
-                                  (click)="replacePartWithPlaceholder(g.sample)" [disabled]="busy">
-                            Make planned
-                          </button>
+                    <div class="part-cell">
+                      <div class="part-main">
+                        <div class="part-name">{{ partLabel(g.sample) }}</div>
+                        @if (canEdit || canEditParts) {
+                          <div class="row-actions">
+                            @if (canEditParts) {
+                              <button mat-button type="button" class="mini-btn"
+                                      (click)="editPart(g.sample)" [disabled]="busy">
+                                Edit part
+                              </button>
+                            }
+                            @if (canEdit) {
+                              <button mat-button type="button" class="mini-btn"
+                                      (click)="replacePartWithPart(g.sample)" [disabled]="busy">
+                                Replace part
+                              </button>
+                              <button mat-button type="button" class="mini-btn"
+                                      (click)="replacePartWithPlaceholder(g.sample)" [disabled]="busy">
+                                Make planned
+                              </button>
+                            }
+                          </div>
                         }
                       </div>
-                    }
+                      @if (groupPhotos(g); as photos) {
+                        @if (photos.length) {
+                          <button type="button" class="part-thumb"
+                                  [class.open]="isPhotosOpen(g)"
+                                  [attr.aria-expanded]="isPhotosOpen(g)"
+                                  [attr.aria-label]="photos.length === 1 ? 'Show photo' : 'Show ' + photos.length + ' photos'"
+                                  (click)="togglePhotos(g)">
+                            @if (photoUrls[photos[0].imageId]; as url) {
+                              <img [src]="url" alt="">
+                            } @else {
+                              <mat-icon>photo</mat-icon>
+                            }
+                            @if (photos.length > 1) {
+                              <span class="thumb-count">{{ photos.length }}</span>
+                            }
+                          </button>
+                        }
+                      }
+                    </div>
                   </td>
                   <td class="col-location">
                     @if (groupLocation(g)) {
@@ -136,6 +164,30 @@ import { PartDialogComponent } from '../parts/part-dialog.component';
                     }
                   </td>
                 </tr>
+                @if (isPhotosOpen(g)) {
+                  <tr class="photo-panel-row">
+                    <td colspan="3">
+                      <div class="photo-panel">
+                        @for (photo of groupPhotos(g); track photo.imageId) {
+                          <figure class="panel-photo">
+                            <button type="button" class="panel-thumb" aria-label="View full size"
+                                    [disabled]="!photoUrls[photo.imageId]"
+                                    (click)="openLightbox(photo)">
+                              @if (photoUrls[photo.imageId]; as url) {
+                                <img [src]="url" alt="Part photo">
+                              } @else if (photoFailed.has(photo.imageId)) {
+                                <mat-icon>broken_image</mat-icon>
+                              } @else {
+                                <mat-spinner diameter="24"></mat-spinner>
+                              }
+                            </button>
+                            <figcaption>{{ photo.createdDate | date:'MMM d, y' }}</figcaption>
+                          </figure>
+                        }
+                      </div>
+                    </td>
+                  </tr>
+                }
               }
               @for (ph of orderedPlaceholders; track ph.id) {
                 <tr class="planned-row">
@@ -266,6 +318,15 @@ import { PartDialogComponent } from '../parts/part-dialog.component';
         </section>
       }
     </div>
+
+    @if (lightboxUrl) {
+      <div class="lightbox" (click)="closeLightbox()" role="dialog" aria-modal="true" aria-label="Photo">
+        <button mat-icon-button type="button" class="lightbox-close" (click)="closeLightbox()" aria-label="Close">
+          <mat-icon>close</mat-icon>
+        </button>
+        <img [src]="lightboxUrl" alt="Part photo full size" (click)="$event.stopPropagation()">
+      </div>
+    }
   `,
   styles: [`
     .back { margin: 0 0 8px -8px; }
@@ -421,6 +482,119 @@ import { PartDialogComponent } from '../parts/part-dialog.component';
     .mini-btn.danger { color: #c62828; }
     .empty-parts { padding: 16px 0 !important; }
 
+    .part-cell {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+    }
+    .part-main { flex: 1 1 auto; min-width: 0; }
+    .part-thumb {
+      position: relative;
+      flex: 0 0 auto;
+      width: 48px;
+      height: 48px;
+      padding: 0;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      overflow: visible;
+      background: #f5f5f5;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #999;
+    }
+    .part-thumb:hover { border-color: #90caf9; }
+    .part-thumb.open { border-color: #1565c0; box-shadow: 0 0 0 1px #1565c0; }
+    .part-thumb img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+      border-radius: 5px;
+    }
+    .thumb-count {
+      position: absolute;
+      top: -6px;
+      right: -6px;
+      min-width: 18px;
+      height: 18px;
+      padding: 0 5px;
+      box-sizing: border-box;
+      border-radius: 9px;
+      background: #1565c0;
+      color: #fff;
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 18px;
+      text-align: center;
+    }
+    .parts-table tbody .photo-panel-row td {
+      padding: 0 0 14px;
+    }
+    .photo-panel {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      padding: 10px;
+      border-radius: 8px;
+      background: #f7f9fc;
+      border: 1px solid #e3e8ef;
+    }
+    .panel-photo { margin: 0; }
+    .panel-photo figcaption {
+      margin-top: 3px;
+      font-size: 11px;
+      color: #777;
+      text-align: center;
+    }
+    .panel-thumb {
+      width: 140px;
+      height: 140px;
+      padding: 0;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      overflow: hidden;
+      background: #f5f5f5;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #999;
+    }
+    .panel-thumb:hover:not(:disabled) { border-color: #90caf9; }
+    .panel-thumb:disabled { cursor: default; }
+    .panel-thumb img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .lightbox {
+      position: fixed;
+      inset: 0;
+      z-index: 1100;
+      background: rgba(0, 0, 0, 0.9);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 48px 8px 8px;
+      box-sizing: border-box;
+    }
+    .lightbox img {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      border-radius: 4px;
+    }
+    .lightbox-close {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      color: #fff;
+      background: rgba(0, 0, 0, 0.35);
+    }
+
     .planned-row .col-type,
     .planned-row .part-name { color: #555; }
     .planned-badge {
@@ -521,13 +695,21 @@ import { PartDialogComponent } from '../parts/part-dialog.component';
       .col-type { width: 28%; max-width: 96px; font-size: 13px; }
       .col-location { width: 22%; }
       .part-name { font-size: 15px; }
+      .panel-thumb { width: 104px; height: 104px; }
       .type-field { width: 100%; }
       .add-row > button { width: 100%; }
     }
   `]
 })
-export class BuildDetailComponent implements OnInit {
+export class BuildDetailComponent implements OnInit, OnDestroy {
   computerDisplayName = computerDisplayName;
+  /** Blob URLs keyed by image id. */
+  photoUrls: Record<number, string> = {};
+  photoFailed = new Set<number>();
+  lightboxUrl: string | null = null;
+  private photoRequests = new Set<number>();
+  private openPhotoGroups = new Set<number>();
+  private groupPhotoCache = new Map<number, GroupPhoto[]>();
   build: BuildDetail | null = null;
   loading = true;
   saving = false;
@@ -681,9 +863,66 @@ export class BuildDetailComponent implements OnInit {
           placeholders: build.placeholders ?? [],
           notes: build.notes ?? []
         };
+        this.groupPhotoCache.clear();
         this.loading = false;
+        for (const g of this.orderedPartGroups) {
+          const photos = this.groupPhotos(g);
+          const toLoad = this.isPhotosOpen(g) ? photos : photos.slice(0, 1);
+          toLoad.forEach(p => this.loadPhoto(p));
+        }
       },
       error: () => { this.build = null; this.loading = false; }
+    });
+  }
+
+  ngOnDestroy(): void {
+    for (const url of Object.values(this.photoUrls)) URL.revokeObjectURL(url);
+  }
+
+  /** Photos across every part in the group, newest first. */
+  groupPhotos(g: GroupedPart<BuildPartSummary>): GroupPhoto[] {
+    let photos = this.groupPhotoCache.get(g.sample.id);
+    if (!photos) {
+      photos = g.parts
+        .flatMap(p => (p.images ?? []).map(i => ({ partId: p.id, imageId: i.id, createdDate: i.createdDate })))
+        .sort((a, b) => Date.parse(b.createdDate) - Date.parse(a.createdDate));
+      this.groupPhotoCache.set(g.sample.id, photos);
+    }
+    return photos;
+  }
+
+  isPhotosOpen(g: GroupedPart<BuildPartSummary>): boolean {
+    return this.openPhotoGroups.has(g.sample.id);
+  }
+
+  togglePhotos(g: GroupedPart<BuildPartSummary>): void {
+    if (this.openPhotoGroups.delete(g.sample.id)) return;
+    this.openPhotoGroups.add(g.sample.id);
+    this.groupPhotos(g).forEach(p => this.loadPhoto(p));
+  }
+
+  openLightbox(photo: GroupPhoto): void {
+    this.lightboxUrl = this.photoUrls[photo.imageId] ?? null;
+  }
+
+  @HostListener('document:keydown.escape')
+  closeLightbox(): void {
+    this.lightboxUrl = null;
+  }
+
+  private loadPhoto(photo: GroupPhoto): void {
+    if (this.photoUrls[photo.imageId] || this.photoRequests.has(photo.imageId)) return;
+    this.photoRequests.add(photo.imageId);
+    this.api.getBuildPartImage(this.buildId, photo.partId, photo.imageId).subscribe({
+      next: blob => {
+        this.photoRequests.delete(photo.imageId);
+        this.photoFailed.delete(photo.imageId);
+        this.photoUrls[photo.imageId] = URL.createObjectURL(blob);
+      },
+      error: () => {
+        this.photoRequests.delete(photo.imageId);
+        this.photoFailed.add(photo.imageId);
+      }
     });
   }
 
