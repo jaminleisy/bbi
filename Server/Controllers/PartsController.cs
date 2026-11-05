@@ -17,6 +17,12 @@ public record MarkReceivedRequest(bool Received, bool AppearsUsed = false);
 /// <summary>Check-off test outcome: good | possiblyBad | definitelyBad | scam</summary>
 public record CheckOffTestRequest(string Outcome, string? Notes);
 
+/// <summary>Undo a check-off receive; RestoreCondition puts back the pre-"appears used" condition.</summary>
+public record UndoCheckOffReceivedRequest(bool RestoreCondition, string? Condition);
+
+/// <summary>Undo a check-off test: clears tested state and restores the prior flags / notes.</summary>
+public record UndoCheckOffTestRequest(int? Bad, int? Scam, string? Notes);
+
 /// <summary>Split one part row into <see cref="Quantity"/> identical unit rows.</summary>
 public record SplitPartRequest(int Quantity, string? ModelNumber);
 
@@ -797,6 +803,42 @@ public class PartsController : ControllerBase
         if (request.Notes is not null)
             part.Notes = request.Notes;
 
+        await _db.SaveChangesAsync();
+        return Ok(new { part.Id, part.TestedDate, part.Bad, part.Scam, part.Notes });
+    }
+
+    [HttpPost("{id:int}/check-off/undo-received")]
+    public async Task<ActionResult> UndoCheckOffReceived(int id, [FromBody] UndoCheckOffReceivedRequest request)
+    {
+        var part = await _db.Parts.FindAsync(id);
+        if (part is null) return NotFound();
+
+        part.Received = false;
+        if (request.RestoreCondition)
+        {
+            var condition = string.IsNullOrWhiteSpace(request.Condition) ? null : request.Condition.Trim();
+            if (condition is not null && !await _db.Conditions.AnyAsync(c => c.Name == condition))
+                return BadRequest(new { message = $"Unknown condition '{condition}'." });
+            part.Condition = condition;
+        }
+        await _db.SaveChangesAsync();
+        return Ok(new { part.Id, part.Received, part.Condition });
+    }
+
+    [HttpPost("{id:int}/check-off/undo-test")]
+    public async Task<ActionResult> UndoCheckOffTest(int id, [FromBody] UndoCheckOffTestRequest request)
+    {
+        if (request.Bad is < 0 or > 2 || request.Scam is < 0 or > 2)
+            return BadRequest(new { message = "Bad and Scam must be 0, 1, 2, or null." });
+
+        var part = await _db.Parts.FindAsync(id);
+        if (part is null) return NotFound();
+
+        part.TestedDate = null;
+        part.TestedUserId = null;
+        part.Bad = request.Bad;
+        part.Scam = request.Scam;
+        part.Notes = request.Notes;
         await _db.SaveChangesAsync();
         return Ok(new { part.Id, part.TestedDate, part.Bad, part.Scam, part.Notes });
     }

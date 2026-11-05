@@ -19,6 +19,12 @@ export interface CheckOffDialogData {
   mode: 'notReceived' | 'untested' | 'transfer';
 }
 
+/** What the dialog changed, with the part as it was beforehand (for undo). */
+export type CheckOffResult =
+  | { action: 'received'; before: Part; appearsUsed: boolean }
+  | { action: 'tested'; before: Part; outcome: CheckOffTestOutcome }
+  | { action: 'transferred'; before: Part; to: string };
+
 interface PreviewImage {
   meta?: PartImageMeta;
   localUrl: string;
@@ -362,7 +368,7 @@ export class CheckOffDialogComponent implements OnInit, OnDestroy {
   }
 
   constructor(
-    public dialogRef: MatDialogRef<CheckOffDialogComponent, boolean>,
+    public dialogRef: MatDialogRef<CheckOffDialogComponent, CheckOffResult>,
     @Inject(MAT_DIALOG_DATA) public data: CheckOffDialogData,
     private api: ApiService,
     private http: HttpClient,
@@ -484,12 +490,7 @@ export class CheckOffDialogComponent implements OnInit, OnDestroy {
       this.api.markReceived(this.part.id, true, appearsUsed).subscribe({
         next: () => {
           this.busy = false;
-          this.snack.open(
-            appearsUsed ? 'Marked received (condition set to Used)' : 'Part marked received',
-            undefined,
-            { duration: 2000 }
-          );
-          this.dialogRef.close(true);
+          this.dialogRef.close({ action: 'received', before: this.data.part, appearsUsed });
         },
         error: err => {
           this.busy = false;
@@ -507,11 +508,11 @@ export class CheckOffDialogComponent implements OnInit, OnDestroy {
         this.busy = false;
         return;
       }
-      this.api.checkOffTest(this.part.id, this.outcome!, this.notes).subscribe({
+      const outcome = this.outcome!;
+      this.api.checkOffTest(this.part.id, outcome, this.notes).subscribe({
         next: () => {
           this.busy = false;
-          this.snack.open('Test result saved', undefined, { duration: 2000 });
-          this.dialogRef.close(true);
+          this.dialogRef.close({ action: 'tested', before: this.data.part, outcome });
         },
         error: err => {
           this.busy = false;
@@ -528,8 +529,7 @@ export class CheckOffDialogComponent implements OnInit, OnDestroy {
     this.api.setPartLocation(this.part.id, dest).subscribe({
       next: () => {
         this.busy = false;
-        this.snack.open(`Part location set to ${dest}`, undefined, { duration: 2000 });
-        this.dialogRef.close(true);
+        this.dialogRef.close({ action: 'transferred', before: this.data.part, to: dest });
       },
       error: err => {
         this.busy = false;

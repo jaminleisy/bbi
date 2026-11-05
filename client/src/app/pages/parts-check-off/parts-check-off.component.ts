@@ -11,9 +11,17 @@ import { MatDialog, MatDialogModule } from '@angular/material/dialog';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { ApiService } from '../../services/api.service';
 import { AuthService } from '../../services/auth.service';
-import { Lookups, Part } from '../../models';
+import { Observable } from 'rxjs';
+import { CheckOffTestOutcome, Lookups, Part } from '../../models';
 import { partDisplayLabel, partTypeLabel, sortTypeNames } from '../../part-display';
-import { CheckOffDialogComponent, CheckOffDialogData } from './check-off-dialog.component';
+import { CheckOffDialogComponent, CheckOffDialogData, CheckOffResult } from './check-off-dialog.component';
+
+const OUTCOME_TEXT: Record<CheckOffTestOutcome, string> = {
+  good: 'tested good',
+  possiblyBad: 'tested possibly bad',
+  definitelyBad: 'tested definitely bad',
+  scam: 'a scam'
+};
 
 type CheckOffMode = 'notReceived' | 'untested' | 'transfer';
 /** Specific required type name, or `'other'` for non-required types. */
@@ -289,21 +297,7 @@ export class PartsCheckOffComponent implements OnInit {
 
     this.api.getParts(filters).subscribe({
       next: parts => {
-        this.parts = [...parts].sort((a, b) => {
-          if (this.mode === 'transfer') {
-            const buildCmp = (a.computerName ?? '').localeCompare(b.computerName ?? '', undefined, {
-              sensitivity: 'base'
-            });
-            if (buildCmp !== 0) return buildCmp;
-            const typeCmp = a.type.localeCompare(b.type, undefined, { sensitivity: 'base' });
-            if (typeCmp !== 0) return typeCmp;
-            return a.id - b.id;
-          }
-          const at = a.orderDate ? Date.parse(a.orderDate) : Number.POSITIVE_INFINITY;
-          const bt = b.orderDate ? Date.parse(b.orderDate) : Number.POSITIVE_INFINITY;
-          if (at !== bt) return at - bt;
-          return a.id - b.id;
-        });
+        this.parts = [...parts].sort((a, b) => this.compareParts(a, b));
         this.loading = false;
       },
       error: () => {
@@ -329,13 +323,99 @@ export class PartsCheckOffComponent implements OnInit {
       autoFocus: false,
       restoreFocus: false
     });
-    ref.afterClosed().subscribe(changed => {
-      if (changed) {
+    const mode = this.mode;
+    const location = this.location;
+    ref.afterClosed().subscribe((result?: CheckOffResult) => {
+      if (result) {
         (document.activeElement as HTMLElement | null)?.blur?.();
         this.parts = this.parts.filter(p => p.id !== part.id);
+        this.showUndoToast(result, mode, location);
       }
       this.restoreScroll(scrollY);
     });
+  }
+
+  private compareParts(a: Part, b: Part): number {
+    if (this.mode === 'transfer') {
+      const buildCmp = (a.computerName ?? '').localeCompare(b.computerName ?? '', undefined, {
+        sensitivity: 'base'
+      });
+      if (buildCmp !== 0) return buildCmp;
+      const typeCmp = a.type.localeCompare(b.type, undefined, { sensitivity: 'base' });
+      if (typeCmp !== 0) return typeCmp;
+      return a.id - b.id;
+    }
+    const at = a.orderDate ? Date.parse(a.orderDate) : Number.POSITIVE_INFINITY;
+    const bt = b.orderDate ? Date.parse(b.orderDate) : Number.POSITIVE_INFINITY;
+    if (at !== bt) return at - bt;
+    return a.id - b.id;
+  }
+
+  private showUndoToast(result: CheckOffResult, mode: CheckOffMode, location: string): void {
+    const ref = this.snack.open(this.toastMessage(result), 'Undo', { duration: 8000 });
+    ref.onAction().subscribe(() => this.confirmUndo(result, mode, location));
+  }
+
+  private toastMessage(result: CheckOffResult): string {
+    const type = partTypeLabel(result.before.type) || 'Part';
+    switch (result.action) {
+      case 'received':
+        return result.appearsUsed ? `${type} marked as received but used` : `${type} marked as received`;
+      case 'tested':
+        return `${type} marked as ${OUTCOME_TEXT[result.outcome]}`;
+      case 'transferred':
+        return `${type} moved to ${result.to}`;
+    }
+  }
+
+  private undoPrompt(result: CheckOffResult): string {
+    const before = result.before;
+    const name = partDisplayLabel(before, partTypeLabel(before.type) || 'this part');
+    const photosKept = 'Any photos added during check-off are kept.';
+    switch (result.action) {
+      case 'received':
+        return result.appearsUsed
+          ? `Undo mark ${name} as received in used condition?\n\n` +
+            `It will go back to not received, with its condition reset to ${before.condition || '(none)'}. ${photosKept}`
+          : `Undo mark ${name} as received?\n\nIt will go back to not received. ${photosKept}`;
+      case 'tested':
+        return `Undo mark ${name} as ${OUTCOME_TEXT[result.outcome]}?\n\n` +
+          `It will go back to untested, and its bad/scam flags and notes will be restored to what they were. ${photosKept}`;
+      case 'transferred': {
+        const from = before.location || '(none)';
+        return `Undo move ${name} from ${from} to ${result.to}?\n\nIts location will go back to ${from}.`;
+      }
+    }
+  }
+
+  private confirmUndo(result: CheckOffResult, mode: CheckOffMode, location: string): void {
+    if (!confirm(this.undoPrompt(result))) return;
+    const before = result.before;
+    this.undoRequest(result).subscribe({
+      next: () => {
+        this.snack.open('Check-off undone', undefined, { duration: 2000 });
+        if (this.mode === mode && this.location === location) {
+          if (!this.parts.some(p => p.id === before.id)) {
+            this.parts = [...this.parts, before].sort((a, b) => this.compareParts(a, b));
+          }
+        } else {
+          this.load();
+        }
+      },
+      error: err => this.snack.open(err.error?.message ?? 'Failed to undo', 'OK')
+    });
+  }
+
+  private undoRequest(result: CheckOffResult): Observable<unknown> {
+    const before = result.before;
+    switch (result.action) {
+      case 'received':
+        return this.api.undoCheckOffReceived(before.id, result.appearsUsed, before.condition);
+      case 'tested':
+        return this.api.undoCheckOffTest(before.id, before);
+      case 'transferred':
+        return this.api.setPartLocation(before.id, before.location ?? '');
+    }
   }
 
   private restoreScroll(y: number): void {

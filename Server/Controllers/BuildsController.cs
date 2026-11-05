@@ -243,7 +243,11 @@ public class BuildsController : ControllerBase
                         p.ModelNumber,
                         p.Color,
                         p.Location,
-                        p.Received
+                        p.Received,
+                        images = p.Images
+                            .OrderByDescending(i => i.CreatedDate)
+                            .Select(i => new { i.Id, i.CreatedDate })
+                            .ToList()
                     })
                     .ToList(),
                 placeholders = c.Placeholders
@@ -310,6 +314,22 @@ public class BuildsController : ControllerBase
                 n.CreatedDate
             }).ToList()
         });
+    }
+
+    /// <summary>Photo bytes for a part on an accessible build (no Level 2 parts access required).</summary>
+    [HttpGet("{id:int}/parts/{partId:int}/images/{imageId:int}")]
+    public async Task<IActionResult> GetPartImage(int id, int partId, int imageId)
+    {
+        var access = await GetCallerBuildAccessAsync();
+        if (access is null) return Unauthorized();
+        if (!await CanAccessAsync(access, id)) return NotFound();
+
+        var image = await _db.PartImages.AsNoTracking()
+            .Where(i => i.Id == imageId && i.PartId == partId && i.Part!.ComputerId == id)
+            .Select(i => new { i.Data, i.ContentType })
+            .FirstOrDefaultAsync();
+        if (image is null) return NotFound();
+        return File(image.Data, image.ContentType);
     }
 
     [HttpPost("{id:int}/notes")]
