@@ -188,6 +188,13 @@ export interface BuildPartSummary {
   color?: string | null;
   location?: string | null;
   received?: boolean;
+  /** Photo metadata, newest first (build detail only). */
+  images?: BuildPartImageRef[];
+}
+
+export interface BuildPartImageRef {
+  id: number;
+  createdDate: string;
 }
 
 export interface BuildPlaceholderSummary {
@@ -250,7 +257,7 @@ export interface BuildUnassignedPart {
 
 export const STATUSES = ['Planned', 'In-progress', 'Built', 'Active', 'Sold', 'Sold eBay', 'Returned', 'Needs repair', 'Traded', 'Personal'];
 export const PAYMENT_TYPES = ['payment', 'deposit', 'refund'];
-export const PAYMENT_METHODS = ['cash', 'PayPal', 'Venmo', 'Zelle', 'CashApp', 'check', 'eBay', 'other'];
+export const PAYMENT_METHODS = ['cash', 'PayPal', 'Venmo', 'Zelle', 'CashApp', 'Apple Pay', 'check', 'eBay', 'other'];
 
 /** Sold through any channel (regular or eBay). */
 export function isSoldStatus(status?: string | null): boolean {

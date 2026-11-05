@@ -6,8 +6,10 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatMenuModule } from '@angular/material/menu';
 import { MatBadgeModule } from '@angular/material/badge';
 import { MatDialog, MatDialogModule } from '@angular/material/dialog';
+import { MatTooltipModule } from '@angular/material/tooltip';
 import { AuthService } from './services/auth.service';
 import { MessengerNotificationsService } from './services/messenger-notifications.service';
+import { ThemeService } from './services/theme.service';
 import { ChangePasswordDialogComponent } from './change-password-dialog.component';
 
 @Component({
@@ -15,7 +17,7 @@ import { ChangePasswordDialogComponent } from './change-password-dialog.componen
   standalone: true,
   imports: [
     RouterOutlet, RouterLink, RouterLinkActive, MatToolbarModule, MatButtonModule,
-    MatIconModule, MatMenuModule, MatBadgeModule, MatDialogModule
+    MatIconModule, MatMenuModule, MatBadgeModule, MatDialogModule, MatTooltipModule
   ],
   template: `
     @if (auth.isLoggedIn) {
@@ -76,6 +78,13 @@ import { ChangePasswordDialogComponent } from './change-password-dialog.componen
         </nav>
 
         <span class="spacer"></span>
+
+        <button mat-icon-button class="theme-toggle"
+                (click)="theme.toggle()"
+                [matTooltip]="theme.isDark() ? 'Switch to light mode' : 'Switch to dark mode'"
+                [attr.aria-label]="theme.isDark() ? 'Switch to light mode' : 'Switch to dark mode'">
+          <mat-icon>{{ theme.isDark() ? 'light_mode' : 'dark_mode' }}</mat-icon>
+        </button>
 
         <button mat-button class="user-btn" [matMenuTriggerFor]="userMenu">
           <mat-icon>account_circle</mat-icon>
@@ -174,6 +183,7 @@ import { ChangePasswordDialogComponent } from './change-password-dialog.componen
       min-width: 0;
     }
     .nav-menu-btn { display: inline-flex; }
+    .theme-toggle { flex-shrink: 0; }
     .user-btn {
       min-width: 0;
       padding: 0 8px;
@@ -203,6 +213,7 @@ export class AppComponent implements OnInit {
   constructor(
     public auth: AuthService,
     public messenger: MessengerNotificationsService,
+    public theme: ThemeService,
     private dialog: MatDialog
   ) {}
 

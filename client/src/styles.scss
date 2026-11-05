@@ -1,6 +1,7 @@
 @use '@angular/material' as mat;
 
 html {
+  color-scheme: light;
   @include mat.theme((
     color: (
       theme-type: light,
@@ -12,10 +13,24 @@ html {
   ));
 }
 
+html.dark-theme {
+  color-scheme: dark;
+  @include mat.theme((
+    color: (
+      theme-type: dark,
+      primary: mat.$azure-palette,
+      tertiary: mat.$blue-palette,
+    ),
+    typography: Roboto,
+    density: 0,
+  ));
+}
+
 html, body { height: 100%; margin: 0; }
 body {
   font-family: Roboto, "Helvetica Neue", sans-serif;
-  background: #fafafa;
+  background: var(--mat-sys-surface, #fafafa);
+  color: var(--mat-sys-on-surface, inherit);
   overflow-x: hidden;
 }
 
@@ -99,6 +114,8 @@ body {
   }
 }
 .ok-text { color: #2e7d32; }
+html.dark-theme .ok-text { color: #81c784; }
+html.dark-theme .warn-text { color: #ef9a9a; }
 
 table { width: 100%; }
 
@@ -116,6 +133,11 @@ table { width: 100%; }
   margin-bottom: 4px;
   white-space: normal;
   word-break: break-word;
+}
+
+html.dark-theme .user-account-menu .user-menu-name {
+  color: rgba(255, 255, 255, 0.87);
+  border-bottom-color: rgba(255, 255, 255, 0.12);
 }
 
 /* Toolbar already shows the name on desktop. */
@@ -183,4 +205,150 @@ select {
     overflow-y: auto !important;
     max-height: min(70vh, calc(90vh - 140px));
   }
+}
+
+/* Dark mode: override hardcoded light surfaces in component styles.
+   html.dark-theme + class beats emulated-encapsulation attribute selectors. */
+html.dark-theme {
+  $placeholder-dark: rgba(255, 255, 255, 0.38);
+  $input-dark: rgba(255, 255, 255, 0.87);
+
+  ::placeholder { color: $placeholder-dark; opacity: 1; }
+  ::-webkit-input-placeholder { color: $placeholder-dark; opacity: 1; }
+  ::-moz-placeholder { color: $placeholder-dark; opacity: 1; }
+
+  input:not([type="checkbox"]):not([type="radio"]),
+  textarea,
+  select {
+    color: $input-dark;
+    &::placeholder { color: $placeholder-dark; opacity: 1; }
+  }
+
+  .mat-mdc-form-field {
+    .mat-mdc-input-element { color: $input-dark; }
+    .mat-mdc-input-element::placeholder { color: $placeholder-dark; opacity: 1; }
+    .mdc-floating-label:not(.mdc-floating-label--float-above) {
+      color: $placeholder-dark !important;
+    }
+    .mat-mdc-select-placeholder { color: $placeholder-dark; }
+    .mat-mdc-select { color: $input-dark; }
+  }
+
+  a { color: #90caf9; }
+
+  .muted,
+  .empty,
+  .hint,
+  .comment-meta,
+  .footer-label,
+  .note-date,
+  .wage-builder,
+  .preview-you,
+  .opt-status,
+  .builder,
+  .part-type {
+    color: var(--mat-sys-on-surface-variant);
+  }
+
+  .footer-text,
+  .comment-text,
+  .computer-notes-text,
+  .note-text {
+    color: var(--mat-sys-on-surface);
+  }
+
+  .build-card,
+  .part-card,
+  .users-table,
+  .rule-card,
+  .draft-card,
+  .invoice-sheet,
+  .thread-pane,
+  .chat-pane {
+    background: var(--mat-sys-surface-container);
+    border-color: var(--mat-sys-outline-variant);
+  }
+
+  .card-header,
+  .card-footer,
+  .detail-content,
+  .composer,
+  .suggestion-bar {
+    background: var(--mat-sys-surface-container-low);
+    border-color: var(--mat-sys-outline-variant);
+  }
+
+  .computer-row:hover,
+  .month-row:hover,
+  .thread-row:hover,
+  .part-card:hover {
+    background: var(--mat-sys-surface-container-high);
+  }
+
+  .expanded-row,
+  .thread-row.selected {
+    background: var(--mat-sys-secondary-container);
+  }
+
+  /* !important: encapsulated component rules (and loc-ben/loc-josh) otherwise win. */
+  .not-received-row,
+  .not-received-row > td:not(.loc-ben):not(.loc-josh) {
+    background: #3e3420 !important;
+  }
+
+  .paid-row td:not(.loc-ben):not(.loc-josh) {
+    background: #1b3d1c !important;
+  }
+
+  .paid-row td.price-cell:hover {
+    background: #1a3347 !important;
+  }
+
+  .josh-unpaid-row td,
+  .josh-unpaid-row td:not(.loc-ben):not(.loc-josh) {
+    background: #4a1c1c !important;
+  }
+
+  .josh-unpaid-row td.price-cell:hover {
+    background: #5a2228 !important;
+  }
+
+  .wrong-location-row td { background: #3e3420 !important; }
+
+  .loc-ben {
+    background: #1b4d32 !important;
+  }
+
+  .loc-josh {
+    background: #1a3a52 !important;
+  }
+
+  .inner-table th,
+  .inner-table td {
+    border-bottom-color: var(--mat-sys-outline-variant);
+  }
+
+  .bubble.incoming {
+    background: var(--mat-sys-surface-container-high);
+    border-color: var(--mat-sys-outline-variant);
+    color: var(--mat-sys-on-surface);
+  }
+
+  .thread-row.unread { background: #3e3420; }
+  .thread-row.unread.selected { background: #5a4a20; }
+
+  .status-planned { background: #5c5420; color: #fff9c4; }
+
+  .photo-panel {
+    background: var(--mat-sys-surface-container-low);
+    border-color: var(--mat-sys-outline-variant);
+  }
+
+  .part-thumb,
+  .panel-thumb {
+    background: var(--mat-sys-surface-container-high);
+    border-color: var(--mat-sys-outline-variant);
+  }
+
+  .panel-photo figcaption { color: var(--mat-sys-on-surface-variant); }
 }

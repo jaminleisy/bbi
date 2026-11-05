@@ -132,6 +132,18 @@ export class ApiService {
     return this.http.post(`${this.api}/parts/${id}/check-off/test`, { outcome, notes });
   }
 
+  undoCheckOffReceived(id: number, restoreCondition: boolean, condition?: string | null) {
+    return this.http.post(`${this.api}/parts/${id}/check-off/undo-received`, { restoreCondition, condition });
+  }
+
+  undoCheckOffTest(id: number, previous: { bad?: number | null; scam?: number | null; notes?: string | null }) {
+    return this.http.post(`${this.api}/parts/${id}/check-off/undo-test`, {
+      bad: previous.bad ?? null,
+      scam: previous.scam ?? null,
+      notes: previous.notes ?? null
+    });
+  }
+
   listPartImages(partId: number): Observable<PartImageMeta[]> {
     return this.http.get<PartImageMeta[]>(`${this.api}/parts/${partId}/images`);
   }
@@ -287,6 +299,10 @@ export class ApiService {
 
   getBuild(id: number): Observable<BuildDetail> {
     return this.http.get<BuildDetail>(`${this.api}/builds/${id}`);
+  }
+
+  getBuildPartImage(buildId: number, partId: number, imageId: number): Observable<Blob> {
+    return this.http.get(`${this.api}/builds/${buildId}/parts/${partId}/images/${imageId}`, { responseType: 'blob' });
   }
 
   getBuildPartTypes(): Observable<PartType[]> {
